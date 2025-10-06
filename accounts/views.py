@@ -4,10 +4,11 @@ from rest_framework import viewsets, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from .models import User, Organization, Role, Permission, Module
+from .models import User, Organization, Role, Permission, Module, ProfileUpdateRequest
 from .serializers import (
     UserListSerializer, UserDetailSerializer, OrganizationSerializer, 
-    RoleSerializer, PermissionSerializer, ModuleSerializer
+    RoleSerializer, PermissionSerializer, ModuleSerializer,
+    ProfileUpdateRequestSerializer, ProfileUpdateRequestCreateSerializer
 )
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -88,4 +89,116 @@ class PermissionViewSet(viewsets.ModelViewSet):
 class ModuleViewSet(viewsets.ModelViewSet):
     queryset = Module.objects.all()
     serializer_class = ModuleSerializer
+
+
+class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return ProfileUpdateRequestCreateSerializer
+        return ProfileUpdateRequestSerializer
+    
+    def get_queryset(self):
+        user = self.request.user
+        
+        # If user is admin/staff, show all requests
+        if user.is_superuser or user.is_staff:
+            return ProfileUpdateRequest.objects.all()
+        
+        # Regular employees can only see their own requests
+        return ProfileUpdateRequest.objects.filter(user=user)
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def approve(self, request, pk=None):
+        """Approve a profile update request (admin only)"""
+        if not (request.user.is_superuser or request.user.is_staff):
+            return Response({'error': 'Permission denied'}, status=403)
+        
+        try:
+            update_request = self.get_object()
+            
+            if update_request.status != 'pending':
+                return Response({'error': 'Request is not pending'}, status=400)
+            
+            # Apply the update to the user profile
+            user = update_request.user
+            field_name = update_request.field_name
+            new_value = update_request.new_value
+            
+            # Handle different field types
+            if field_name in ['current_address', 'permanent_address']:
+                # Handle address fields - create new Address object
+                from common.models import Address
+                address = Address.objects.create(
+                    line1=new_value,
+                    city='N/A',  # Default value
+                    pincode='000000',  # Default value
+                    type='current' if field_name == 'current_address' else 'permanent'
+                )
+                setattr(user, field_name, address)
+            else:
+                # Handle regular fields
+                setattr(user, field_name, new_value)
+            
+            user.save()
+            
+            # Update request status
+            update_request.status = 'approved'
+            update_request.approved_by = request.user
+            update_request.processed_at = timezone.now()
+            update_request.admin_comment = request.data.get('admin_comment', '')
+            update_request.save()
+            
+            return Response({
+                'message': 'Profile update approved and applied',
+                'request_id': update_request.id
+            })
+            
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def reject(self, request, pk=None):
+        """Reject a profile update request (admin only)"""
+        if not (request.user.is_superuser or request.user.is_staff):
+            return Response({'error': 'Permission denied'}, status=403)
+        
+        try:
+            update_request = self.get_object()
+            
+            if update_request.status != 'pending':
+                return Response({'error': 'Request is not pending'}, status=400)
+            
+            # Update request status
+            update_request.status = 'rejected'
+            update_request.approved_by = request.user
+            update_request.processed_at = timezone.now()
+            update_request.admin_comment = request.data.get('admin_comment', 'Request rejected')
+            update_request.save()
+            
+            return Response({
+                'message': 'Profile update rejected',
+                'request_id': update_request.id
+            })
+            
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def pending(self, request):
+        """Get all pending requests (admin only)"""
+        if not (request.user.is_superuser or request.user.is_staff):
+            return Response({'error': 'Permission denied'}, status=403)
+        
+        pending_requests = ProfileUpdateRequest.objects.filter(status='pending')
+        serializer = self.get_serializer(pending_requests, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def my_requests(self, request):
+        """Get current user's profile update requests"""
+        user_requests = ProfileUpdateRequest.objects.filter(user=request.user)
+        serializer = self.get_serializer(user_requests, many=True)
+        return Response(serializer.data)
 

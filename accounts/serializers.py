@@ -1,8 +1,9 @@
 import os
+from django.contrib.auth import authenticate
 from django.conf import settings
 from rest_framework import serializers
-from .models import User, Organization, Role, Permission, Module
-from common.models import Designation, Technology, Shift
+from .models import User, Role, ProfileUpdateRequest, Organization, Module, Permission
+from common.models import Address, Designation, Technology, Shift
 
 class OrganizationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -66,7 +67,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            'id', 'username', 'first_name', 'last_name', 'email', 'phone',
+            'id', 'username', 'password', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'birth_date',
             'gender', 'marital_status', 'is_active', 'is_staff', 'is_superuser', 'employee_details',
             'emergency_contact', 'emergency_phone', 'salary', 'designations', 'technologies', 'shifts',
@@ -107,7 +108,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         create_folder = validated_data.pop('create_folder', False)
-        password = validated_data.pop('password', None)
+        # Don't pop password yet - let Django handle it in user creation
+        password = validated_data.get('password', None)
         current_address_text = validated_data.pop('current_address_text', '')
         permanent_address_text = validated_data.pop('permanent_address_text', '')
         
@@ -147,10 +149,13 @@ class UserDetailSerializer(serializers.ModelSerializer):
         }
         validated_data['employee_details'] = employee_details
         
+        # Remove password from validated_data before creating the instance
+        validated_data.pop('password', None)
         instance = super().create(validated_data)
         
         if password:
             instance.set_password(password)
+            instance.save()  # Save the instance after setting password
         
         # Create employee folder if requested
         if create_folder:
@@ -237,6 +242,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
         
         if password:
             instance.set_password(password)
+            instance.save()  # Save the instance after setting password
         
         # Create employee folder if requested and not already created
         if create_folder and not instance.folder_path:
@@ -261,3 +267,29 @@ class UserDetailSerializer(serializers.ModelSerializer):
         
         instance.save()
         return instance
+
+
+class ProfileUpdateRequestSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.username', read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    approved_by_name = serializers.CharField(source='approved_by.username', read_only=True)
+    
+    class Meta:
+        model = ProfileUpdateRequest
+        fields = [
+            'id', 'user', 'user_name', 'user_email', 'field_name', 
+            'old_value', 'new_value', 'status', 'reason', 'admin_comment',
+            'approved_by', 'approved_by_name', 'requested_at', 'processed_at'
+        ]
+        read_only_fields = ['user', 'requested_at', 'processed_at', 'approved_by']
+
+class ProfileUpdateRequestCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProfileUpdateRequest
+        fields = ['field_name', 'old_value', 'new_value', 'reason']
+    
+    def create(self, validated_data):
+        # Get user from request context
+        user = self.context['request'].user
+        validated_data['user'] = user
+        return super().create(validated_data)

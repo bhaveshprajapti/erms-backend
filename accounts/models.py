@@ -1,7 +1,7 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from common.models import (
-    Address, EmployeeType, Designation, Technology, Shift, StatusChoice
+    Address, EmployeeType, Designation, Technology, Shift
 )
 
 class Organization(models.Model):
@@ -98,4 +98,33 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.username
+
+
+class ProfileUpdateRequest(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='profile_update_requests')
+    field_name = models.CharField(max_length=100, help_text="Name of the field being updated")
+    old_value = models.TextField(null=True, blank=True, help_text="Previous value")
+    new_value = models.TextField(help_text="New requested value")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    reason = models.TextField(null=True, blank=True, help_text="Reason for update request")
+    admin_comment = models.TextField(null=True, blank=True, help_text="Admin's comment on approval/rejection")
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_requests')
+    requested_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['status', 'requested_at']),
+        ]
+        ordering = ['-requested_at']
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.field_name} update ({self.status})"
 
