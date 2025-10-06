@@ -2,7 +2,7 @@ import os
 from django.conf import settings
 from rest_framework import serializers
 from .models import User, Organization, Role, Permission, Module
-from common.models import Designation
+from common.models import Designation, Technology, Shift
 
 class OrganizationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -28,18 +28,30 @@ class UserListSerializer(serializers.ModelSerializer):
     designations = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Designation.objects.filter(is_active=True), required=False
     )
+    technologies = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Technology.objects.filter(is_active=True), required=False
+    )
+    shifts = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Shift.objects.filter(is_active=True), required=False
+    )
     
     class Meta:
         model = User
         fields = (
             'id', 'username', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'is_active', 
-            'is_staff', 'is_superuser', 'designations'
+            'is_staff', 'is_superuser', 'designations', 'technologies', 'shifts'
         )
 
 class UserDetailSerializer(serializers.ModelSerializer):
     designations = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Designation.objects.filter(is_active=True), required=False
+    )
+    technologies = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Technology.objects.filter(is_active=True), required=False
+    )
+    shifts = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Shift.objects.filter(is_active=True), required=False
     )
     create_folder = serializers.BooleanField(write_only=True, required=False, default=False)
     
@@ -57,7 +69,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
             'id', 'username', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'birth_date',
             'gender', 'marital_status', 'is_active', 'is_staff', 'is_superuser', 'employee_details',
-            'emergency_contact', 'emergency_phone', 'salary', 'designations', 
+            'emergency_contact', 'emergency_phone', 'salary', 'designations', 'technologies', 'shifts',
             'folder_path', 'create_folder', 'is_on_probation', 'probation_months',
             'is_on_notice_period', 'notice_period_end_date', 'profile_picture',
             'current_address', 'permanent_address', 'current_address_text', 
@@ -104,6 +116,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
             from common.models import Address
             current_addr = Address.objects.create(
                 line1=current_address_text,
+                city='N/A',  # Default value
+                pincode='000000',  # Default value
                 type='current'
             )
             validated_data['current_address'] = current_addr
@@ -112,6 +126,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
             from common.models import Address
             permanent_addr = Address.objects.create(
                 line1=permanent_address_text,
+                city='N/A',  # Default value
+                pincode='000000',  # Default value
                 type='permanent'
             )
             validated_data['permanent_address'] = permanent_addr
@@ -177,6 +193,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
             else:
                 current_addr = Address.objects.create(
                     line1=current_address_text,
+                    city='N/A',  # Default value
+                    pincode='000000',  # Default value
                     type='current'
                 )
                 validated_data['current_address'] = current_addr
@@ -189,6 +207,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
             else:
                 permanent_addr = Address.objects.create(
                     line1=permanent_address_text,
+                    city='N/A',  # Default value
+                    pincode='000000',  # Default value
                     type='permanent'
                 )
                 validated_data['permanent_address'] = permanent_addr
