@@ -1,5 +1,6 @@
 from django.utils import timezone
-from rest_framework import viewsets
+from django.db import models
+from rest_framework import viewsets, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -56,6 +57,18 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """Soft delete the user instead of hard delete"""
+        # Prevent deletion of superusers
+        if instance.is_superuser:
+            raise serializers.ValidationError(
+                {"detail": "Superuser accounts cannot be deleted."}
+            )
+        
+        # Prevent users from deleting themselves
+        if instance == self.request.user:
+            raise serializers.ValidationError(
+                {"detail": "You cannot delete your own account."}
+            )
+            
         instance.deleted_at = timezone.now()
         instance.is_active = False
         instance.save()

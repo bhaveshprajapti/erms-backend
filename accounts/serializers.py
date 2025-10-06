@@ -34,7 +34,7 @@ class UserListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'username', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'is_active', 
-            'is_staff', 'designations'
+            'is_staff', 'is_superuser', 'designations'
         )
 
 class UserDetailSerializer(serializers.ModelSerializer):
@@ -56,7 +56,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'username', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'birth_date',
-            'gender', 'marital_status', 'is_active', 'is_staff', 'employee_details',
+            'gender', 'marital_status', 'is_active', 'is_staff', 'is_superuser', 'employee_details',
             'emergency_contact', 'emergency_phone', 'salary', 'designations', 
             'folder_path', 'create_folder', 'is_on_probation', 'probation_months',
             'is_on_notice_period', 'notice_period_end_date', 'profile_picture',
