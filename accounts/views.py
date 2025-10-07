@@ -1,9 +1,12 @@
 from django.utils import timezone
 from django.db import models
-from rest_framework import viewsets, serializers
-from rest_framework.decorators import action
+from django.contrib.auth import authenticate
+from rest_framework import viewsets, serializers, status
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.authtoken.models import Token
+from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User, Organization, Role, Permission, Module, ProfileUpdateRequest
 from .serializers import (
     UserListSerializer, UserDetailSerializer, OrganizationSerializer, 
@@ -201,4 +204,95 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
         user_requests = ProfileUpdateRequest.objects.filter(user=request.user)
         serializer = self.get_serializer(user_requests, many=True)
         return Response(serializer.data)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def custom_login(request):
+    """
+    Custom login view that provides specific error messages
+    for different authentication failure scenarios.
+    """
+    username = request.data.get('username')
+    password = request.data.get('password')
+    
+    # Check if username and password are provided
+    if not username or not password:
+        return Response({
+            'error': 'Username and password are required.',
+            'details': 'Please provide both username and password to login.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Check if user exists
+    try:
+        user = User.objects.get(username=username, deleted_at__isnull=True)
+    except User.DoesNotExist:
+        return Response({
+            'error': 'Invalid username or password.',
+            'details': 'The username or password you entered is incorrect. Please check your credentials and try again.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Check if user is active
+    if not user.is_active:
+        return Response({
+            'error': 'Account is inactive.',
+            'details': 'Your account has been deactivated. Please contact your administrator for assistance.'
+        }, status=status.HTTP_403_FORBIDDEN)
+    
+    # Authenticate user
+    authenticated_user = authenticate(username=username, password=password)
+    
+    if authenticated_user is None:
+        return Response({
+            'error': 'Invalid username or password.',
+            'details': 'The username or password you entered is incorrect. Please check your credentials and try again.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Check if user has been soft deleted
+    if authenticated_user.deleted_at is not None:
+        return Response({
+            'error': 'Account not found.',
+            'details': 'Your account is no longer available. Please contact your administrator for assistance.'
+        }, status=status.HTTP_404_NOT_FOUND)
+    
+    # Check organization status if applicable
+    if authenticated_user.organization and not authenticated_user.organization.is_active:
+        return Response({
+            'error': 'Organization is inactive.',
+            'details': 'Your organization account has been suspended. Please contact your administrator.'
+        }, status=status.HTTP_403_FORBIDDEN)
+    
+    # Create JWT tokens
+    refresh = RefreshToken.for_user(authenticated_user)
+    access_token = refresh.access_token
+    
+    # Prepare user data
+    user_data = {
+        'id': authenticated_user.id,
+        'username': authenticated_user.username,
+        'email': authenticated_user.email,
+        'first_name': authenticated_user.first_name,
+        'last_name': authenticated_user.last_name,
+        'is_staff': authenticated_user.is_staff,
+        'is_superuser': authenticated_user.is_superuser,
+        'phone': authenticated_user.phone,
+        'employee_type': authenticated_user.employee_type.name if authenticated_user.employee_type else None,
+        'organization': {
+            'id': authenticated_user.organization.id if authenticated_user.organization else None,
+            'name': authenticated_user.organization.name if authenticated_user.organization else None,
+        } if authenticated_user.organization else None,
+        'role': {
+            'id': authenticated_user.role.id if authenticated_user.role else None,
+            'name': authenticated_user.role.display_name if authenticated_user.role else None,
+        } if authenticated_user.role else None,
+        'joining_date': authenticated_user.joining_date,
+        'profile_picture': authenticated_user.profile_picture.url if authenticated_user.profile_picture else None,
+    }
+    
+    return Response({
+        'access': str(access_token),
+        'refresh': str(refresh),
+        'message': 'Login successful.',
+        'user': user_data
+    }, status=status.HTTP_200_OK)
 
