@@ -120,3 +120,17 @@ class Shift(models.Model):
     def __str__(self):
         return self.name
 
+
+class Holiday(models.Model):
+    date = models.DateField(unique=True)
+    title = models.CharField(max_length=120)
+    description = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=['date'])]
+        ordering = ['date']
+
+    def __str__(self):
+        return f"{self.title} ({self.date})"
+
