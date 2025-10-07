@@ -1,9 +1,10 @@
 from django.urls import path, include
-from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     UserViewSet, OrganizationViewSet, RoleViewSet, 
-    PermissionViewSet, ModuleViewSet, ProfileUpdateRequestViewSet
+    PermissionViewSet, ModuleViewSet, ProfileUpdateRequestViewSet,
+    custom_login
 )
 
 router = DefaultRouter()
@@ -15,6 +16,7 @@ router.register(r'modules', ModuleViewSet)
 router.register(r'profile-update-requests', ProfileUpdateRequestViewSet, basename='profileupdaterequest')
 
 urlpatterns = [
-    path('login', obtain_auth_token, name='api_token_auth'),
+    path('login', custom_login, name='custom_login'),
+    path('token/refresh', TokenRefreshView.as_view(), name='token_refresh'),
     path('', include(router.urls)),
 ]
