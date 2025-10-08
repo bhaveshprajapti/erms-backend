@@ -12,6 +12,15 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
     queryset = LeaveType.objects.all()
     serializer_class = LeaveTypeSerializer
 
+    def perform_destroy(self, instance):
+        # Prevent deleting a leave type that is used in any policy
+        if LeavePolicy.objects.filter(leave_types=instance).exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({
+                'detail': f'Cannot delete leave type "{instance.name}" because it is used in one or more leave policies.'
+            })
+        super().perform_destroy(instance)
+
 class LeavePolicyViewSet(viewsets.ModelViewSet):
     queryset = LeavePolicy.objects.all()
     serializer_class = LeavePolicySerializer
