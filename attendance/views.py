@@ -13,6 +13,39 @@ from .serializers import (
 class AttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Attendance.objects.all()
+        if not (user.is_staff or user.is_superuser):
+            qs = qs.filter(user=user)
+        # Optional filters for staff/admin
+        user_id = self.request.query_params.get('user')
+        if user_id and (user.is_staff or user.is_superuser):
+            qs = qs.filter(user_id=user_id)
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        if start_date:
+            qs = qs.filter(date__gte=start_date)
+        if end_date:
+            qs = qs.filter(date__lte=end_date)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can create attendance records.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can update attendance records.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can delete attendance records.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
 
 class LeaveRequestViewSet(viewsets.ModelViewSet):
     queryset = LeaveRequest.objects.all()
@@ -116,8 +149,52 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
 class TimeAdjustmentViewSet(viewsets.ModelViewSet):
     queryset = TimeAdjustment.objects.all()
     serializer_class = TimeAdjustmentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = TimeAdjustment.objects.all()
+        if not (user.is_staff or user.is_superuser):
+            qs = qs.filter(user=user)
+        # Optional filters for staff/admin
+        user_id = self.request.query_params.get('user')
+        if user_id and (user.is_staff or user.is_superuser):
+            qs = qs.filter(user_id=user_id)
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        if start_date:
+            qs = qs.filter(date__gte=start_date)
+        if end_date:
+            qs = qs.filter(date__lte=end_date)
+        status_id = self.request.query_params.get('status')
+        if status_id:
+            qs = qs.filter(status_id=status_id)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can create time adjustments via admin.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can update time adjustments.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can delete time adjustments.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
 
 class ApprovalViewSet(viewsets.ModelViewSet):
     queryset = Approval.objects.all()
     serializer_class = ApprovalSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return Approval.objects.all()
+        # Non-staff can only view approvals where they are the approver
+        return Approval.objects.filter(approver=user)
 
