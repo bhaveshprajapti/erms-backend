@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'assets',
     'resources',
     'audit',
+    'leave',
 ]
 
 MIDDLEWARE = [
