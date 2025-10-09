@@ -7,6 +7,7 @@ from django.utils import timezone
 from datetime import datetime, time, timedelta
 from common.models import StatusChoice
 from .models import Attendance, LeaveRequest, TimeAdjustment, Approval
+from leave.models import FlexibleTimingRequest
 from .serializers import (
     AttendanceSerializer, LeaveRequestSerializer, 
     TimeAdjustmentSerializer, ApprovalSerializer
@@ -51,18 +52,78 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'Only staff can delete attendance records.'}, status=status.HTTP_403_FORBIDDEN)
         return super().destroy(request, *args, **kwargs)
 
-    def _check_leave_status(self, user, date):
-        """Check if user is on approved leave for the given date"""
+    def _check_leave_status(self, user, date, current_time=None):
+        """Check if user is on approved leave for the given date and time"""
         try:
-            approved_status = StatusChoice.objects.get(category='leave_status', name__iexact='Approved')
-            return LeaveRequest.objects.filter(
+            # Try to get approved status, but also check by status value directly
+            approved_status = None
+            try:
+                approved_status = StatusChoice.objects.get(category='leave_status', name__iexact='Approved')
+            except StatusChoice.DoesNotExist:
+                pass
+            
+            # Filter for approved leaves - check both by status object and status value
+            leave_requests = LeaveRequest.objects.filter(
                 user=user,
                 start_date__lte=date,
-                end_date__gte=date,
-                status=approved_status
-            ).exists()
+                end_date__gte=date
+            )
+            
+            # Filter for approved leaves only (status = 2 or approved_status object)
+            if approved_status:
+                leave_requests = leave_requests.filter(status=approved_status)
+            else:
+                # Fallback: assume status = 2 means approved
+                leave_requests = leave_requests.filter(status=2)
+            
+            for leave in leave_requests:
+                # For full-day leave, block completely
+                if not hasattr(leave, 'half_day_type') or not leave.half_day_type:
+                    return True, f"You have approved full-day leave on {date}. Check-in is not allowed."
+                
+                # For half-day leave, check timing
+                if current_time and hasattr(leave, 'half_day_type') and leave.half_day_type:
+                    current_hour = current_time.hour
+                    
+                    if leave.half_day_type == 'morning':
+                        # Morning half-day leave (9 AM - 1 PM)
+                        if 9 <= current_hour < 13:
+                            return True, f"You have approved morning half-day leave (9 AM - 1 PM). Check-in allowed after 1 PM."
+                    elif leave.half_day_type == 'afternoon':
+                        # Afternoon half-day leave (1 PM - 6 PM)
+                        if 13 <= current_hour < 18:
+                            return True, f"You have approved afternoon half-day leave (1 PM - 6 PM). Check-in allowed before 1 PM."
+            
+            return False, ""
         except StatusChoice.DoesNotExist:
-            return False
+            return False, ""
+
+    def _check_flexible_timing_status(self, user, date, current_time):
+        """Check if user has approved flexible timing for the given date and time"""
+        try:
+            approved_status = StatusChoice.objects.get(category='flexible_timing_status', name__iexact='Approved')
+            flexible_requests = FlexibleTimingRequest.objects.filter(
+                user=user,
+                requested_date=date,
+                status=approved_status
+            )
+            
+            for request in flexible_requests:
+                current_hour = current_time.hour
+                current_minute = current_time.minute
+                current_total_minutes = current_hour * 60 + current_minute
+                
+                # Check if current time falls within the flexible timing period
+                if hasattr(request, 'start_time') and hasattr(request, 'end_time') and request.start_time and request.end_time:
+                    start_minutes = request.start_time.hour * 60 + request.start_time.minute
+                    end_minutes = request.end_time.hour * 60 + request.end_time.minute
+                    
+                    if start_minutes <= current_total_minutes <= end_minutes:
+                        return True, f"You have approved flexible timing from {request.start_time} to {request.end_time}. Check-in allowed during this period."
+            
+            return False, ""
+        except (StatusChoice.DoesNotExist, AttributeError):
+            return False, ""
 
     def _get_user_shifts(self, user):
         """Get user's active shifts"""
@@ -76,7 +137,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             start_time = shift.start_time
             end_time = shift.end_time
             
-            if shift.is_overnight:
+            # Detect overnight shift: either by flag or by end_time < start_time
+            is_overnight = shift.is_overnight or end_time < start_time
+            
+            if is_overnight:
                 # For overnight shifts, check if time is after start OR before end
                 if current_time_only >= start_time or current_time_only <= end_time:
                     return True
@@ -130,9 +194,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         today = now.date()
         
         # Check if user is on leave
-        if self._check_leave_status(user, today):
+        is_on_leave, leave_message = self._check_leave_status(user, today, now)
+        if is_on_leave:
             return Response({
-                'detail': 'Cannot check-in while on approved leave.'
+                'detail': leave_message
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get user shifts
@@ -142,8 +207,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'detail': 'No shift assigned. Contact admin.'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Check if within shift hours
-        if not self._is_within_shift_hours(now, shifts):
+        # Check if within shift hours or has approved flexible timing
+        within_shift = self._is_within_shift_hours(now, shifts)
+        has_flexible_timing, flexible_message = self._check_flexible_timing_status(user, today, now)
+        
+        if not within_shift and not has_flexible_timing:
             return Response({
                 'detail': 'Check-in not allowed outside shift hours.'
             }, status=status.HTTP_400_BAD_REQUEST)
@@ -251,7 +319,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 response_data['break_time'] = str(self._calculate_break_time(sessions))
             
             # Check if on leave
-            response_data['is_on_leave'] = self._check_leave_status(user, today)
+            is_on_leave, _ = self._check_leave_status(user, today, timezone.now())
+            response_data['is_on_leave'] = is_on_leave
             
             return Response(response_data)
             
@@ -263,7 +332,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'completed_sessions': 0,
                 'total_hours': '0:00:00',
                 'break_time': '0:00:00',
-                'is_on_leave': self._check_leave_status(user, today)
+                'is_on_leave': self._check_leave_status(user, today, timezone.now())[0]
             })
 
 class LeaveRequestViewSet(viewsets.ModelViewSet):
