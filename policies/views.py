@@ -40,4 +40,5 @@ class FlexPolicyViewSet(viewsets.ModelViewSet):
 class FlexBalanceViewSet(viewsets.ModelViewSet):
     queryset = FlexBalance.objects.all()
     serializer_class = FlexBalanceSerializer
+    serializer_class = FlexBalanceSerializer
 
