@@ -1,29 +1,979 @@
-from rest_framework import viewsets
-from rest_framework.decorators import action
+from django.shortcuts import render
+from django.db.models import Q, Sum, Count, Avg
+from django.utils import timezone
+from rest_framework import viewsets, status, permissions
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from datetime import date, timedelta, datetime
+from decimal import Decimal
+from django.db import transaction
 
-# Import the existing models and serializers from the original apps
-from attendance.models import LeaveRequest
-from attendance.serializers import LeaveRequestSerializer
-from attendance.views import LeaveRequestViewSet as AttendanceLeaveRequestViewSet
-
-from policies.models import LeaveBalance
-from policies.serializers import LeaveBalanceSerializer
-from policies.views import LeaveBalanceViewSet as PoliciesLeaveBalanceViewSet
-
-
-class LeaveRequestViewSet(AttendanceLeaveRequestViewSet):
-    """
-    Proxy ViewSet that delegates to the existing LeaveRequestViewSet in attendance app.
-    This maintains all existing functionality while providing the expected /api/v1/leave/ endpoint.
-    """
-    pass
+from .models import (
+    LeaveType, LeaveTypePolicy, LeaveBalance, 
+    LeaveApplication, LeaveApplicationComment, LeaveCalendar
+)
+from .serializers import (
+    LeaveTypeSerializer, LeaveTypePolicySerializer, LeaveBalanceSerializer,
+    LeaveApplicationSerializer, LeaveApplicationCreateSerializer,
+    LeaveApplicationApprovalSerializer, LeaveApplicationCommentSerializer,
+    LeaveCalendarSerializer, UserLeaveStatsSerializer, LeaveReportSerializer,
+    BulkLeaveBalanceUpdateSerializer
+)
+from accounts.models import User
 
 
-class LeaveBalanceViewSet(PoliciesLeaveBalanceViewSet):
-    """
-    Proxy ViewSet that delegates to the existing LeaveBalanceViewSet in policies app.
-    This maintains all existing functionality while providing the expected /api/v1/leave/ endpoint.
-    """
-    pass
+class LeaveTypeViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing leave types"""
+    queryset = LeaveType.objects.all()
+    serializer_class = LeaveTypeSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(is_active=True)
+        return queryset.order_by('name')
+    
+    @action(detail=True, methods=['get'])
+    def policies(self, request, pk=None):
+        """Get all policies for a specific leave type"""
+        leave_type = self.get_object()
+        policies = leave_type.policies.filter(is_active=True)
+        serializer = LeaveTypePolicySerializer(policies, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def available_for_user(self, request):
+        """Get leave types available for current user"""
+        user = request.user
+        leave_types = LeaveType.objects.filter(is_active=True)
+        
+        available_types = []
+        for leave_type in leave_types:
+            # Check if user has any applicable policy for this leave type
+            applicable_policies = leave_type.policies.filter(
+                is_active=True,
+                effective_from__lte=date.today()
+            ).filter(
+                Q(effective_to__isnull=True) | Q(effective_to__gte=date.today())
+            )
+            
+            has_applicable_policy = any(
+                policy.is_applicable_for_user(user) 
+                for policy in applicable_policies
+            )
+            
+            if has_applicable_policy:
+                available_types.append(leave_type)
+        
+        serializer = LeaveTypeSerializer(available_types, many=True)
+        return Response(serializer.data)
+
+
+class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing leave type policies"""
+    queryset = LeaveTypePolicy.objects.all()
+    serializer_class = LeaveTypePolicySerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        leave_type_id = self.request.query_params.get('leave_type')
+        if leave_type_id:
+            queryset = queryset.filter(leave_type_id=leave_type_id)
+        
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(is_active=True)
+        
+        return queryset.order_by('leave_type__name', 'name')
+    
+    @action(detail=True, methods=['post'])
+    def clone(self, request, pk=None):
+        """Clone a policy with new name"""
+        original_policy = self.get_object()
+        new_name = request.data.get('name')
+        
+        if not new_name:
+            return Response(
+                {'error': 'Name is required for cloning'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create a copy
+        cloned_policy = LeaveTypePolicy.objects.create(
+            name=new_name,
+            leave_type=original_policy.leave_type,
+            applicable_gender=original_policy.applicable_gender,
+            annual_quota=original_policy.annual_quota,
+            accrual_frequency=original_policy.accrual_frequency,
+            accrual_rate=original_policy.accrual_rate,
+            max_per_week=original_policy.max_per_week,
+            max_per_month=original_policy.max_per_month,
+            max_per_year=original_policy.max_per_year,
+            max_consecutive_days=original_policy.max_consecutive_days,
+            min_notice_days=original_policy.min_notice_days,
+            requires_approval=original_policy.requires_approval,
+            auto_approve_threshold=original_policy.auto_approve_threshold,
+            carry_forward_enabled=original_policy.carry_forward_enabled,
+            carry_forward_limit=original_policy.carry_forward_limit,
+            carry_forward_expiry_months=original_policy.carry_forward_expiry_months,
+            min_tenure_days=original_policy.min_tenure_days,
+            available_during_probation=original_policy.available_during_probation,
+            include_weekends=original_policy.include_weekends,
+            include_holidays=original_policy.include_holidays,
+            effective_from=date.today()
+        )
+        
+        # Copy applicable roles
+        cloned_policy.applicable_roles.set(original_policy.applicable_roles.all())
+        
+        serializer = self.get_serializer(cloned_policy)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class LeaveBalanceViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing leave balances"""
+    queryset = LeaveBalance.objects.all()
+    serializer_class = LeaveBalanceSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Filter by user if not admin
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(user=self.request.user)
+        
+        # Filter by query parameters
+        user_id = self.request.query_params.get('user')
+        if user_id:
+            queryset = queryset.filter(user_id=user_id)
+        
+        leave_type_id = self.request.query_params.get('leave_type')
+        if leave_type_id:
+            queryset = queryset.filter(leave_type_id=leave_type_id)
+        
+        year = self.request.query_params.get('year')
+        if year:
+            queryset = queryset.filter(year=year)
+        else:
+            # Default to current year
+            queryset = queryset.filter(year=date.today().year)
+        
+        return queryset.order_by('user__username', 'leave_type__name')
+    
+    @action(detail=False, methods=['get'])
+    def my_balances(self, request):
+        """Get current user's leave balances"""
+        current_year = date.today().year
+        balances = LeaveBalance.objects.filter(
+            user=request.user,
+            year=current_year
+        ).select_related('leave_type', 'policy')
+        
+        serializer = LeaveBalanceSerializer(balances, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['post'])
+    def bulk_update(self, request):
+        """Bulk update leave balances"""
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = BulkLeaveBalanceUpdateSerializer(data=request.data)
+        if serializer.is_valid():
+            data = serializer.validated_data
+            updated_count = 0
+            
+            with transaction.atomic():
+                for user_id in data['user_ids']:
+                    try:
+                        user = User.objects.get(id=user_id)
+                        balance, created = LeaveBalance.objects.get_or_create(
+                            user=user,
+                            leave_type=data['leave_type'],
+                            year=data['year']
+                        )
+                        
+                        if 'opening_balance' in data:
+                            balance.opening_balance = data['opening_balance']
+                        if 'adjustment' in data:
+                            balance.adjustment = data['adjustment']
+                        
+                        balance.save()
+                        updated_count += 1
+                    except User.DoesNotExist:
+                        continue
+            
+            return Response({
+                'message': f'Updated {updated_count} leave balances',
+                'updated_count': updated_count
+            })
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['post'])
+    def initialize_for_year(self, request):
+        """Initialize leave balances for all users for a specific year"""
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        year = request.data.get('year', date.today().year)
+        
+        created_count = 0
+        with transaction.atomic():
+            users = User.objects.filter(is_active=True, role__isnull=False)
+            leave_types = LeaveType.objects.filter(is_active=True)
+            
+            for user in users:
+                for leave_type in leave_types:
+                    # Find applicable policy
+                    applicable_policies = LeaveTypePolicy.objects.filter(
+                        leave_type=leave_type,
+                        is_active=True,
+                        effective_from__lte=date.today()
+                    ).filter(
+                        Q(effective_to__isnull=True) | Q(effective_to__gte=date.today())
+                    )
+                    
+                    applicable_policy = None
+                    for policy in applicable_policies:
+                        if policy.is_applicable_for_user(user):
+                            applicable_policy = policy
+                            break
+                    
+                    if applicable_policy:
+                        balance, created = LeaveBalance.objects.get_or_create(
+                            user=user,
+                            leave_type=leave_type,
+                            year=year,
+                            defaults={
+                                'policy': applicable_policy,
+                                'opening_balance': applicable_policy.annual_quota
+                            }
+                        )
+                        
+                        if created:
+                            created_count += 1
+        
+        return Response({
+            'message': f'Initialized {created_count} leave balances for year {year}',
+            'created_count': created_count
+        })
+
+    @action(detail=False, methods=['post'])
+    def assign_balances(self, request):
+        """Assign leave balances based on active policies"""
+        year = request.data.get('year', date.today().year)
+        user_ids = request.data.get('user_ids', [])
+        force_reset = request.data.get('force_reset', False)
+
+        try:
+            from .services import LeaveBalanceService
+            summary = LeaveBalanceService.assign_annual_balances(
+                year=year,
+                user_ids=user_ids if user_ids else None,
+                force_reset=force_reset
+            )
+
+            return Response({
+                'message': 'Leave balances assigned successfully',
+                'summary': summary
+            })
+
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['get'])
+    def summary(self, request, pk=None):
+        """Get comprehensive balance summary for a specific user"""
+        try:
+            user = User.objects.get(pk=pk)
+            year = request.query_params.get('year', date.today().year)
+
+            from .services import LeaveReportService
+            summary = LeaveReportService.get_user_leave_summary(user, year)
+
+            return Response(summary)
+
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def summaries(self, request):
+        """Get balance summaries for all users"""
+        try:
+            year = request.query_params.get('year', date.today().year)
+            user_ids = request.query_params.getlist('user_ids')
+
+            if user_ids:
+                users = User.objects.filter(id__in=user_ids, is_active=True)
+            else:
+                users = User.objects.filter(is_active=True)
+
+            summaries = []
+            from .services import LeaveReportService
+            for user in users:
+                summary = LeaveReportService.get_user_leave_summary(user, year)
+                summaries.append(summary)
+
+            return Response(summaries)
+
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class LeaveApplicationViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing leave applications"""
+    queryset = LeaveApplication.objects.all()
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return LeaveApplicationCreateSerializer
+        return LeaveApplicationSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Filter by user if not admin
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(user=self.request.user)
+        
+        # Filter by status
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        
+        # Filter by date range
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        if start_date:
+            queryset = queryset.filter(start_date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(end_date__lte=end_date)
+        
+        # Filter by leave type
+        leave_type_id = self.request.query_params.get('leave_type')
+        if leave_type_id:
+            queryset = queryset.filter(leave_type_id=leave_type_id)
+        
+        # Filter by user (admin only)
+        if self.request.user.is_staff:
+            user_id = self.request.query_params.get('user')
+            if user_id:
+                queryset = queryset.filter(user_id=user_id)
+        
+        return queryset.select_related('user', 'leave_type', 'policy', 'approved_by').order_by('-applied_at')
+    
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+    
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Approve a leave application"""
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        application = self.get_object()
+        if application.status != 'pending':
+            return Response(
+                {'error': 'Only pending applications can be approved'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = LeaveApplicationApprovalSerializer(data=request.data)
+        if serializer.is_valid():
+            data = serializer.validated_data
+            
+            if data['action'] == 'approve':
+                application.approve(request.user, data.get('comments'))
+                return Response({'message': 'Application approved successfully'})
+            else:
+                application.reject(
+                    request.user, 
+                    data['rejection_reason'],
+                    data.get('comments')
+                )
+                return Response({'message': 'Application rejected successfully'})
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Cancel a leave application"""
+        application = self.get_object()
+        
+        # Check permission
+        if application.user != request.user and not request.user.is_staff:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if not application.can_be_cancelled():
+            return Response(
+                {'error': 'Application cannot be cancelled'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        application.status = 'cancelled'
+        application.save()
+        
+        return Response({'message': 'Application cancelled successfully'})
+    
+    def destroy(self, request, *args, **kwargs):
+        """Delete a leave application with proper permissions"""
+        application = self.get_object()
+        
+        # Check permissions based on user type
+        if request.user.is_staff:
+            # Admin can delete until end date
+            if not application.can_be_deleted_by_admin():
+                return Response(
+                    {'error': 'Cannot delete this application. Either it has ended or is already rejected/cancelled.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            # Regular user can only delete their own applications until start date
+            if application.user != request.user:
+                return Response(
+                    {'error': 'Permission denied'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            if not application.can_be_deleted_by_user():
+                return Response(
+                    {'error': 'Cannot delete this application. You can only delete pending applications before the start date.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # If application was approved, restore the balance
+        if application.status == 'approved':
+            try:
+                balance = LeaveBalance.objects.get(
+                    user=application.user,
+                    leave_type=application.leave_type,
+                    year=application.start_date.year
+                )
+                balance.used_balance = max(Decimal('0'), balance.used_balance - application.total_days)
+                balance.save()
+            except LeaveBalance.DoesNotExist:
+                pass
+        
+        # Delete the application
+        application.delete()
+        
+        return Response({'message': 'Leave application deleted successfully'})
+    
+    @action(detail=True, methods=['get'])
+    def comments(self, request, pk=None):
+        """Get comments for a leave application"""
+        application = self.get_object()
+        
+        # Check permission
+        if application.user != request.user and not request.user.is_staff:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        comments = application.comments.all()
+        if not request.user.is_staff:
+            # Hide internal comments from employees
+            comments = comments.filter(is_internal=False)
+        
+        serializer = LeaveApplicationCommentSerializer(comments, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def add_comment(self, request, pk=None):
+        """Add a comment to leave application"""
+        application = self.get_object()
+        
+        # Check permission
+        if application.user != request.user and not request.user.is_staff:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = LeaveApplicationCommentSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(application=application, user=request.user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def pending_approvals(self, request):
+        """Get pending applications for approval (admin only)"""
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        applications = LeaveApplication.objects.filter(
+            status='pending'
+        ).select_related('user', 'leave_type', 'policy').order_by('applied_at')
+        
+        serializer = LeaveApplicationSerializer(applications, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def my_applications(self, request):
+        """Get current user's leave applications"""
+        applications = LeaveApplication.objects.filter(
+            user=request.user
+        ).select_related('leave_type', 'policy', 'approved_by').order_by('-applied_at')
+        
+        # Filter by status if provided
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            applications = applications.filter(status=status_filter)
+        
+        serializer = LeaveApplicationSerializer(applications, many=True)
+        return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def leave_calendar(request):
+    """Get leave calendar data"""
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
+    
+    if not start_date or not end_date:
+        return Response(
+            {'error': 'start_date and end_date parameters are required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+    except ValueError:
+        return Response(
+            {'error': 'Invalid date format. Use YYYY-MM-DD'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    calendar_entries = LeaveCalendar.objects.filter(
+        date__gte=start_date,
+        date__lte=end_date
+    ).select_related('user', 'leave_application__leave_type')
+    
+    # Filter by user if not admin
+    if not request.user.is_staff:
+        calendar_entries = calendar_entries.filter(user=request.user)
+    
+    serializer = LeaveCalendarSerializer(calendar_entries, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def leave_statistics(request):
+    """Get leave statistics"""
+    if not request.user.is_staff:
+        # Employee can only see their own stats
+        user = request.user
+        current_year = date.today().year
+        
+        balances = LeaveBalance.objects.filter(
+            user=user,
+            year=current_year
+        ).select_related('leave_type')
+        
+        stats = []
+        for balance in balances:
+            pending_apps = LeaveApplication.objects.filter(
+                user=user,
+                leave_type=balance.leave_type,
+                status='pending',
+                start_date__year=current_year
+            ).count()
+            
+            stats.append({
+                'user_id': user.id,
+                'user_name': user.get_full_name(),
+                'leave_type': balance.leave_type.name,
+                'leave_type_code': balance.leave_type.code,
+                'total_available': balance.total_available,
+                'used_balance': balance.used_balance,
+                'remaining_balance': balance.remaining_balance,
+                'pending_applications': pending_apps
+            })
+        
+        return Response(stats)
+    
+    else:
+        # Admin can see overall statistics
+        year = request.query_params.get('year', date.today().year)
+        
+        # Overall stats
+        total_applications = LeaveApplication.objects.filter(
+            start_date__year=year
+        ).count()
+        
+        approved_applications = LeaveApplication.objects.filter(
+            start_date__year=year,
+            status='approved'
+        ).count()
+        
+        rejected_applications = LeaveApplication.objects.filter(
+            start_date__year=year,
+            status='rejected'
+        ).count()
+        
+        pending_applications = LeaveApplication.objects.filter(
+            status='pending'
+        ).count()
+        
+        total_days_taken = LeaveApplication.objects.filter(
+            start_date__year=year,
+            status='approved'
+        ).aggregate(total=Sum('total_days'))['total'] or 0
+        
+        # By leave type
+        by_leave_type = LeaveApplication.objects.filter(
+            start_date__year=year
+        ).values('leave_type__name').annotate(
+            count=Count('id')
+        ).order_by('-count')
+        
+        # By role
+        by_role = LeaveApplication.objects.filter(
+            start_date__year=year
+        ).values('user__role__display_name').annotate(
+            count=Count('id')
+        ).order_by('-count')
+        
+        stats = {
+            'period': str(year),
+            'total_applications': total_applications,
+            'approved_applications': approved_applications,
+            'rejected_applications': rejected_applications,
+            'pending_applications': pending_applications,
+            'total_days_taken': total_days_taken,
+            'by_leave_type': {item['leave_type__name']: item['count'] for item in by_leave_type},
+            'by_role': {item['user__role__display_name']: item['count'] for item in by_role if item['user__role__display_name']}
+        }
+        
+        return Response(stats)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def assign_annual_balances(request):
+    """API endpoint to assign annual leave balances"""
+    if not request.user.is_staff:
+        return Response(
+            {'error': 'Permission denied'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    from .services import LeaveBalanceService
+    
+    year = request.data.get('year', date.today().year)
+    user_ids = request.data.get('user_ids', None)
+    force_reset = request.data.get('force_reset', False)
+    
+    try:
+        summary = LeaveBalanceService.assign_annual_balances(
+            year=year,
+            user_ids=user_ids,
+            force_reset=force_reset
+        )
+        return Response(summary)
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def process_monthly_accruals(request):
+    """API endpoint to process monthly accruals"""
+    if not request.user.is_staff:
+        return Response(
+            {'error': 'Permission denied'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    from .services import LeaveBalanceService
+    
+    year = request.data.get('year', date.today().year)
+    month = request.data.get('month', date.today().month)
+    user_ids = request.data.get('user_ids', None)
+    
+    try:
+        summary = LeaveBalanceService.process_monthly_accruals(
+            year=year,
+            month=month,
+            user_ids=user_ids
+        )
+        return Response(summary)
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def adjust_balance(request):
+    """API endpoint to manually adjust leave balance"""
+    if not request.user.is_staff:
+        return Response(
+            {'error': 'Permission denied'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    from .services import LeaveBalanceService
+    from .models import LeaveType
+    
+    try:
+        user_id = request.data.get('user_id')
+        leave_type_id = request.data.get('leave_type_id')
+        year = request.data.get('year', date.today().year)
+        adjustment_amount = Decimal(str(request.data.get('adjustment_amount', 0)))
+        reason = request.data.get('reason', '')
+        
+        if not user_id or not leave_type_id or adjustment_amount == 0:
+            return Response(
+                {'error': 'user_id, leave_type_id, and adjustment_amount are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        user = User.objects.get(id=user_id)
+        leave_type = LeaveType.objects.get(id=leave_type_id)
+        
+        balance = LeaveBalanceService.adjust_balance(
+            user=user,
+            leave_type=leave_type,
+            year=year,
+            adjustment_amount=adjustment_amount,
+            reason=reason,
+            performed_by=request.user
+        )
+        
+        serializer = LeaveBalanceSerializer(balance)
+        return Response({
+            'message': 'Balance adjusted successfully',
+            'balance': serializer.data
+        })
+        
+    except (User.DoesNotExist, LeaveType.DoesNotExist) as e:
+        return Response(
+            {'error': f'Invalid user or leave type: {str(e)}'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def user_balance_summary(request, user_id=None):
+    """Get comprehensive balance summary for a user"""
+    if user_id:
+        if not request.user.is_staff and request.user.id != int(user_id):
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        user = User.objects.get(id=user_id)
+    else:
+        user = request.user
+    
+    from .services import LeaveBalanceService
+    
+    year = request.query_params.get('year')
+    if year:
+        year = int(year)
+    
+    try:
+        summary = LeaveBalanceService.get_balance_summary_for_user(user, year)
+        return Response(summary)
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def check_leave_eligibility(request):
+    """Check if user can apply for leave"""
+    from .services import LeaveBalanceService
+    from .models import LeaveType
+    
+    try:
+        leave_type_id = request.data.get('leave_type_id')
+        days = request.data.get('days')
+        start_date = request.data.get('start_date')
+        end_date = request.data.get('end_date')
+        
+        if not all([leave_type_id, days, start_date, end_date]):
+            return Response(
+                {'error': 'leave_type_id, days, start_date, and end_date are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        leave_type = LeaveType.objects.get(id=leave_type_id)
+        start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        
+        is_eligible, messages = LeaveBalanceService.check_leave_eligibility(
+            user=request.user,
+            leave_type=leave_type,
+            days=float(days),
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        return Response({
+            'is_eligible': is_eligible,
+            'messages': messages
+        })
+        
+    except (LeaveType.DoesNotExist, ValueError) as e:
+        return Response(
+            {'error': f'Invalid data: {str(e)}'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def balance_report(request):
+    """Generate balance report"""
+    if not request.user.is_staff:
+        return Response(
+            {'error': 'Permission denied'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    from .services import LeaveReportService
+    
+    year = request.query_params.get('year')
+    if year:
+        year = int(year)
+    
+    department = request.query_params.get('department')
+    role = request.query_params.get('role')
+    
+    try:
+        report_data = LeaveReportService.generate_balance_report(
+            department=department,
+            role=role,
+            year=year
+        )
+        return Response(report_data)
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def compliance_report(request):
+    """Generate policy compliance report"""
+    if not request.user.is_staff:
+        return Response(
+            {'error': 'Permission denied'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    from .services import LeaveReportService
+    
+    year = request.query_params.get('year')
+    if year:
+        year = int(year)
+    
+    try:
+        report_data = LeaveReportService.generate_policy_compliance_report(year=year)
+        return Response(report_data)
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def bulk_balance_import(request):
+    """Bulk import/update leave balances"""
+    if not request.user.is_staff:
+        return Response(
+            {'error': 'Permission denied'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    from .services import LeaveBalanceService
+    
+    balance_data = request.data.get('balance_data', [])
+    
+    if not balance_data:
+        return Response(
+            {'error': 'balance_data is required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        summary = LeaveBalanceService.bulk_balance_import(
+            balance_data=balance_data,
+            performed_by=request.user
+        )
+        return Response(summary)
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+def test_view(request):
+    return Response({'message': 'Leave app is working!'}, status=status.HTTP_200_OK)
