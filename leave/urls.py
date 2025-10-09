@@ -7,6 +7,9 @@ router.register(r'types', views.LeaveTypeViewSet)
 router.register(r'policies', views.LeaveTypePolicyViewSet)
 router.register(r'balances', views.LeaveBalanceViewSet)
 router.register(r'applications', views.LeaveApplicationViewSet)
+router.register(r'flexible-timing-types', views.FlexibleTimingTypeViewSet, basename='flexibletimingtype')
+router.register(r'flexible-timing-requests', views.FlexibleTimingRequestViewSet, basename='flexibletimingrequest')
+router.register(r'flexible-timing-balances', views.FlexibleTimingBalanceViewSet, basename='flexibletimingbalance')
 
 urlpatterns = [
     path('api/v1/', include(router.urls)),

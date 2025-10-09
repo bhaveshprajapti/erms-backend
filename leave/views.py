@@ -11,16 +11,25 @@ from django.db import transaction
 
 from .models import (
     LeaveType, LeaveTypePolicy, LeaveBalance, 
-    LeaveApplication, LeaveApplicationComment, LeaveCalendar
+    LeaveApplication, LeaveApplicationComment, LeaveCalendar,
+    FlexibleTimingType, FlexibleTimingRequest, FlexibleTimingBalance
 )
 from .serializers import (
     LeaveTypeSerializer, LeaveTypePolicySerializer, LeaveBalanceSerializer,
     LeaveApplicationSerializer, LeaveApplicationCreateSerializer,
     LeaveApplicationApprovalSerializer, LeaveApplicationCommentSerializer,
     LeaveCalendarSerializer, UserLeaveStatsSerializer, LeaveReportSerializer,
-    BulkLeaveBalanceUpdateSerializer
+    BulkLeaveBalanceUpdateSerializer, FlexibleTimingTypeSerializer,
+    FlexibleTimingRequestSerializer, FlexibleTimingBalanceSerializer
 )
 from accounts.models import User
+
+# Import the flexible timing views from the separate file
+from .flexible_timing_views import (
+    FlexibleTimingTypeViewSet,
+    FlexibleTimingRequestViewSet,
+    FlexibleTimingBalanceViewSet
+)
 
 
 class LeaveTypeViewSet(viewsets.ModelViewSet):
@@ -977,3 +986,5 @@ def bulk_balance_import(request):
 @api_view(['GET'])
 def test_view(request):
     return Response({'message': 'Leave app is working!'}, status=status.HTTP_200_OK)
+
+

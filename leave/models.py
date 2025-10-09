@@ -608,3 +608,255 @@ class LeaveBalanceAudit(models.Model):
     
     def __str__(self):
         return f"{self.balance} - {self.action} ({self.change_amount})"
+
+
+class FlexibleTimingType(models.Model):
+    """Types of flexible timing requests (late arrival, early departure, etc.)"""
+    name = models.CharField(max_length=100, unique=True)
+    code = models.CharField(max_length=20, unique=True)
+    description = models.TextField(null=True, blank=True)
+    max_duration_minutes = models.PositiveIntegerField(default=60, help_text="Maximum duration in minutes")
+    max_per_month = models.PositiveIntegerField(default=2, help_text="Maximum requests per month")
+    requires_approval = models.BooleanField(default=True)
+    advance_notice_hours = models.PositiveIntegerField(default=2, help_text="Minimum advance notice required in hours")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class FlexibleTimingRequest(models.Model):
+    """Flexible timing requests (late arrival, early departure)"""
+    TIMING_CHOICES = [
+        ('late_arrival', 'Late Arrival'),
+        ('early_departure', 'Early Departure'),
+        ('extended_break', 'Extended Break'),
+        ('custom', 'Custom Timing'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('pending', 'Pending Approval'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('cancelled', 'Cancelled'),
+        ('used', 'Used'),
+        ('expired', 'Expired'),
+    ]
+
+    # Basic information
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='flexible_timing_requests')
+    timing_type = models.ForeignKey(FlexibleTimingType, on_delete=models.CASCADE)
+    request_type = models.CharField(max_length=20, choices=TIMING_CHOICES, default='late_arrival')
+    
+    # Timing details
+    requested_date = models.DateField()
+    duration_minutes = models.PositiveIntegerField(help_text="Duration in minutes")
+    start_time = models.TimeField(null=True, blank=True, help_text="For custom timing requests")
+    end_time = models.TimeField(null=True, blank=True, help_text="For custom timing requests")
+    
+    # Request details
+    reason = models.TextField()
+    is_emergency = models.BooleanField(default=False)
+    
+    # Status and approval
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='pending')
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_timing_requests')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(null=True, blank=True)
+    admin_comments = models.TextField(null=True, blank=True)
+    
+    # Usage tracking
+    used_at = models.DateTimeField(null=True, blank=True, help_text="When the flexible timing was actually used")
+    actual_duration_minutes = models.PositiveIntegerField(null=True, blank=True, help_text="Actual duration used")
+    
+    # Tracking
+    applied_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['requested_date', 'status']),
+            models.Index(fields=['timing_type', 'status']),
+            models.Index(fields=['applied_at']),
+        ]
+        ordering = ['-applied_at']
+
+    def __str__(self):
+        return f"{self.user.username} - {self.get_request_type_display()} ({self.requested_date})"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        from datetime import datetime, timedelta
+        
+        # Validate duration doesn't exceed type limit
+        if self.timing_type and self.duration_minutes > self.timing_type.max_duration_minutes:
+            raise ValidationError(f"Duration cannot exceed {self.timing_type.max_duration_minutes} minutes for {self.timing_type.name}")
+        
+        # Validate advance notice
+        if self.timing_type and self.requested_date and not self.is_emergency:
+            notice_required = timedelta(hours=self.timing_type.advance_notice_hours)
+            request_datetime = datetime.combine(self.requested_date, datetime.min.time())
+            if datetime.now() + notice_required > request_datetime:
+                raise ValidationError(f"Minimum {self.timing_type.advance_notice_hours} hours advance notice required")
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+
+    def can_be_cancelled(self):
+        """Check if request can be cancelled by user"""
+        return self.status in ['draft', 'pending', 'approved'] and self.requested_date >= date.today()
+
+    def can_be_used(self):
+        """Check if approved request can be used"""
+        return (self.status == 'approved' and 
+                self.requested_date == date.today() and 
+                not self.used_at)
+
+    def mark_as_used(self, actual_duration=None):
+        """Mark the request as used"""
+        self.status = 'used'
+        self.used_at = timezone.now()
+        if actual_duration:
+            self.actual_duration_minutes = actual_duration
+        self.save()
+
+    def get_monthly_usage_count(self):
+        """Get count of approved/used requests for the same month"""
+        return FlexibleTimingRequest.objects.filter(
+            user=self.user,
+            timing_type=self.timing_type,
+            requested_date__year=self.requested_date.year,
+            requested_date__month=self.requested_date.month,
+            status__in=['approved', 'used']
+        ).exclude(id=self.id).count()
+
+    def validate_monthly_limit(self):
+        """Check if monthly limit is exceeded"""
+        current_count = self.get_monthly_usage_count()
+        return current_count < self.timing_type.max_per_month
+
+
+class FlexibleTimingBalance(models.Model):
+    """Track user's flexible timing balance and usage"""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='flexible_timing_balances')
+    timing_type = models.ForeignKey(FlexibleTimingType, on_delete=models.CASCADE)
+    year = models.PositiveIntegerField()
+    month = models.PositiveIntegerField()
+    
+    # Usage tracking
+    total_allowed = models.PositiveIntegerField(default=0)
+    used_count = models.PositiveIntegerField(default=0)
+    pending_count = models.PositiveIntegerField(default=0)
+    
+    # Duration tracking (in minutes)
+    total_duration_used = models.PositiveIntegerField(default=0)
+    total_duration_pending = models.PositiveIntegerField(default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'timing_type', 'year', 'month')
+        indexes = [
+            models.Index(fields=['user', 'year', 'month']),
+            models.Index(fields=['timing_type', 'year', 'month']),
+        ]
+        ordering = ['user__username', 'timing_type__name', '-year', '-month']
+
+    def __str__(self):
+        return f"{self.user.username} - {self.timing_type.name} ({self.year}-{self.month:02d})"
+
+    @property
+    def remaining_count(self):
+        """Remaining requests available"""
+        return max(0, self.total_allowed - self.used_count - self.pending_count)
+
+    @property
+    def can_request_more(self):
+        """Check if user can make more requests"""
+        return self.remaining_count > 0
+
+    def update_usage(self):
+        """Update usage counts based on actual requests"""
+        requests = FlexibleTimingRequest.objects.filter(
+            user=self.user,
+            timing_type=self.timing_type,
+            requested_date__year=self.year,
+            requested_date__month=self.month
+        )
+        
+        self.used_count = requests.filter(status='used').count()
+        self.pending_count = requests.filter(status__in=['pending', 'approved']).count()
+        
+        self.total_duration_used = sum(
+            req.actual_duration_minutes or req.duration_minutes 
+            for req in requests.filter(status='used')
+        )
+        self.total_duration_pending = sum(
+            req.duration_minutes 
+            for req in requests.filter(status__in=['pending', 'approved'])
+        )
+        
+        self.save()
+
+
+class FlexibleTimingPolicy(models.Model):
+    """Policies for flexible timing management"""
+    name = models.CharField(max_length=100, unique=True)
+    applicable_roles = models.ManyToManyField(Role, blank=True)
+    
+    # General settings
+    is_active = models.BooleanField(default=True)
+    requires_manager_approval = models.BooleanField(default=True)
+    requires_hr_approval = models.BooleanField(default=False)
+    
+    # Emergency settings
+    allow_emergency_requests = models.BooleanField(default=True)
+    emergency_auto_approve = models.BooleanField(default=False)
+    emergency_max_duration = models.PositiveIntegerField(default=30, help_text="Max emergency duration in minutes")
+    
+    # Notification settings
+    notify_manager = models.BooleanField(default=True)
+    notify_hr = models.BooleanField(default=False)
+    notify_team = models.BooleanField(default=False)
+    
+    # Restrictions
+    blackout_dates = models.ManyToManyField('LeaveBlackoutDate', blank=True)
+    min_team_strength_required = models.PositiveIntegerField(null=True, blank=True, help_text="Minimum team members required to be present")
+    
+    effective_from = models.DateField(default=date.today)
+    effective_to = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    def is_applicable_for_user(self, user):
+        """Check if this policy applies to the given user"""
+        if not self.is_active:
+            return False
+            
+        # Check role
+        if self.applicable_roles.exists() and user.role not in self.applicable_roles.all():
+            return False
+        
+        # Check effective dates
+        today = date.today()
+        if self.effective_from > today:
+            return False
+        if self.effective_to and self.effective_to < today:
+            return False
+        
+        return True
