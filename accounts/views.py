@@ -129,22 +129,66 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
             field_name = update_request.field_name
             new_value = update_request.new_value
             
-            # Handle different field types
-            if field_name in ['current_address', 'permanent_address']:
-                # Handle address fields - create new Address object
-                from common.models import Address
-                address = Address.objects.create(
-                    line1=new_value,
-                    city='N/A',  # Default value
-                    pincode='000000',  # Default value
-                    type='current' if field_name == 'current_address' else 'permanent'
-                )
-                setattr(user, field_name, address)
+            # Handle multiple fields update (consolidated request)
+            if field_name == 'multiple_fields':
+                # Parse the new_value to extract individual field changes
+                # Format: "field name: old → new, field2: old → new"
+                import re
+                changes = new_value.split(', ')
+                
+                for change in changes:
+                    # Extract field name and new value - allow spaces in field names
+                    match = re.match(r'([^:]+):\s*"([^"]*?)"\s*→\s*"([^"]*?)"', change)
+                    if match:
+                        field = match.group(1).strip()
+                        new_val = match.group(3)
+                        
+                        # Convert field name with spaces to underscore format
+                        field = field.replace(' ', '_')
+                        
+                        # Apply the change
+                        if field in ['current_address', 'permanent_address']:
+                            from common.models import Address
+                            # Update existing address or create new one
+                            existing_address = getattr(user, field, None)
+                            if existing_address:
+                                existing_address.line1 = new_val
+                                existing_address.save()
+                            else:
+                                address = Address.objects.create(
+                                    line1=new_val,
+                                    city='N/A',
+                                    pincode='000000',
+                                    type='current' if field == 'current_address' else 'permanent'
+                                )
+                                setattr(user, field, address)
+                        else:
+                            # Handle regular fields
+                            setattr(user, field, new_val)
+                
+                user.save()
             else:
-                # Handle regular fields
-                setattr(user, field_name, new_value)
-            
-            user.save()
+                # Handle single field update (backward compatibility)
+                if field_name in ['current_address', 'permanent_address']:
+                    # Handle address fields - create or update Address object
+                    from common.models import Address
+                    existing_address = getattr(user, field_name, None)
+                    if existing_address:
+                        existing_address.line1 = new_value
+                        existing_address.save()
+                    else:
+                        address = Address.objects.create(
+                            line1=new_value,
+                            city='N/A',  # Default value
+                            pincode='000000',  # Default value
+                            type='current' if field_name == 'current_address' else 'permanent'
+                        )
+                        setattr(user, field_name, address)
+                else:
+                    # Handle regular fields
+                    setattr(user, field_name, new_value)
+                
+                user.save()
             
             # Update request status
             update_request.status = 'approved'
