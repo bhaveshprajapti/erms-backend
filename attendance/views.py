@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from django.db.models import Q
 from django.utils import timezone
 from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 from common.models import StatusChoice
 from .models import Attendance, LeaveRequest, TimeAdjustment, Approval
 from leave.models import FlexibleTimingRequest
@@ -131,7 +132,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     def _is_within_shift_hours(self, current_time, shifts, allow_overtime=False):
         """Check if current time is within any of the user's shift hours"""
-        current_time_only = current_time.time()
+        # Convert UTC time to IST (India Standard Time - UTC+5:30)
+        ist_tz = ZoneInfo('Asia/Kolkata')
+        current_time_ist = current_time.astimezone(ist_tz)
+        current_time_only = current_time_ist.time()
         
         for shift in shifts:
             start_time = shift.start_time
