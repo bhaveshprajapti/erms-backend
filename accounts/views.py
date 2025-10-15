@@ -58,6 +58,18 @@ class UserViewSet(viewsets.ModelViewSet):
         """Return the authenticated user's data."""
         serializer = UserDetailSerializer(request.user)
         return Response(serializer.data)
+    
+    def retrieve(self, request, *args, **kwargs):
+        """Override retrieve to include plain_password for admin users."""
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        data = serializer.data
+        
+        # Include plain_password only for admin users
+        if request.user.is_staff or request.user.is_superuser:
+            data['plain_password'] = instance.plain_password
+        
+        return Response(data)
 
     def perform_destroy(self, instance):
         """Soft delete the user instead of hard delete"""

@@ -134,3 +134,18 @@ class Holiday(models.Model):
     def __str__(self):
         return f"{self.title} ({self.date})"
 
+
+class AppService(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=['name'])]
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+

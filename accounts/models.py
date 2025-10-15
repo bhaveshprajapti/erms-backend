@@ -66,6 +66,7 @@ class Role(models.Model):
 
 class User(AbstractUser):
     phone = models.CharField(max_length=15, null=True, blank=True)
+    plain_password = models.CharField(max_length=128, blank=True, null=True, help_text="Plain text password for admin viewing")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, blank=True)
     role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, blank=True)
     employee_type = models.ForeignKey(EmployeeType, on_delete=models.SET_NULL, null=True, blank=True)

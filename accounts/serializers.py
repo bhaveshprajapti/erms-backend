@@ -67,7 +67,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            'id', 'username', 'password', 'first_name', 'last_name', 'email', 'phone',
+            'id', 'username', 'password', 'plain_password', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'birth_date',
             'gender', 'marital_status', 'is_active', 'is_staff', 'is_superuser', 'employee_details',
             'emergency_contact', 'emergency_phone', 'salary', 'designations', 'technologies', 'shifts',
@@ -79,6 +79,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
         )
         extra_kwargs = {
             'password': {'write_only': True},
+            'plain_password': {'write_only': True},
             'folder_path': {'read_only': True}
         }
 
@@ -108,8 +109,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         create_folder = validated_data.pop('create_folder', False)
-        # Don't pop password yet - let Django handle it in user creation
+        # Handle both password and plain_password
         password = validated_data.get('password', None)
+        plain_password = validated_data.get('plain_password', None)
         current_address_text = validated_data.pop('current_address_text', '')
         permanent_address_text = validated_data.pop('permanent_address_text', '')
         
@@ -155,6 +157,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
         
         if password:
             instance.set_password(password)
+            # Store plain password for admin viewing (if provided)
+            if plain_password:
+                instance.plain_password = plain_password
             instance.save()  # Save the instance after setting password
         
         # Create employee folder if requested
@@ -186,6 +191,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         create_folder = validated_data.pop('create_folder', False)
         password = validated_data.pop('password', None)
+        plain_password = validated_data.pop('plain_password', None)
         current_address_text = validated_data.pop('current_address_text', '')
         permanent_address_text = validated_data.pop('permanent_address_text', '')
         
@@ -242,6 +248,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
         
         if password:
             instance.set_password(password)
+            # Update plain password for admin viewing (if provided)
+            if plain_password:
+                instance.plain_password = plain_password
             instance.save()  # Save the instance after setting password
         
         # Create employee folder if requested and not already created
