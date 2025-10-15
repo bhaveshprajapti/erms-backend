@@ -13,6 +13,7 @@ class Client(models.Model):
     rating = models.PositiveIntegerField(default=0)
     gst_number = models.CharField(max_length=15, null=True, blank=True)
     website = models.URLField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

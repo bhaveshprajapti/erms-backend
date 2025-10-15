@@ -10,7 +10,7 @@ from .serializers import (
 
 
 class ClientViewSet(viewsets.ModelViewSet):
-    queryset = Client.objects.all().order_by('-created_at')
+    queryset = Client.objects.select_related('address', 'organization', 'status').order_by('-created_at')
     
     def get_serializer_class(self):
         if self.action == 'list':
