@@ -33,21 +33,55 @@ class EmployeeTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeType
         fields = '__all__'
+        
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Make all fields optional for partial updates (when instance exists = update operation)
+        if self.instance is not None:
+            for field_name, field in self.fields.items():
+                field.required = False
+                if hasattr(field, 'allow_blank'):
+                    field.allow_blank = True
 
 class DesignationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Designation
         fields = '__all__'
+        
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Make all fields optional for partial updates (when instance exists = update operation)
+        if self.instance is not None:
+            for field_name, field in self.fields.items():
+                field.required = False
+                if hasattr(field, 'allow_blank'):
+                    field.allow_blank = True
 
 class TechnologySerializer(serializers.ModelSerializer):
     class Meta:
         model = Technology
         fields = '__all__'
+        
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Make all fields optional for partial updates
+        if self.instance is not None:
+            for field_name, field in self.fields.items():
+                field.required = False
+                field.allow_blank = True
 
 class ShiftSerializer(serializers.ModelSerializer):
     class Meta:
         model = Shift
         fields = '__all__'
+        
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Make all fields optional for partial updates
+        if self.instance is not None:
+            for field_name, field in self.fields.items():
+                field.required = False
+                field.allow_blank = True
 
 class HolidaySerializer(serializers.ModelSerializer):
     class Meta:
@@ -58,3 +92,11 @@ class AppServiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = AppService
         fields = '__all__'
+        
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Make all fields optional for partial updates
+        if self.instance is not None:
+            for field_name, field in self.fields.items():
+                field.required = False
+                field.allow_blank = True

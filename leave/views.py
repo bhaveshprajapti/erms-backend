@@ -44,6 +44,51 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_active=True)
         return queryset.order_by('name')
     
+    def perform_update(self, serializer):
+        """Handle leave type status changes with proper validation"""
+        leave_type = self.get_object()
+        old_is_active = leave_type.is_active
+        new_is_active = serializer.validated_data.get('is_active', old_is_active)
+        
+        # If deactivating leave type, check if it's used in active policies
+        if old_is_active and not new_is_active:
+            active_policies = LeaveTypePolicy.objects.filter(
+                leave_type=leave_type,
+                is_active=True
+            )
+            if active_policies.exists():
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({
+                    'is_active': "Cannot deactivate leave type. It is currently used in active policies. "
+                               "Please deactivate all related policies first."
+                })
+        
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Handle leave type deletion with proper validation"""
+        # Check if it's used in any policies (active or inactive)
+        policies = LeaveTypePolicy.objects.filter(leave_type=instance)
+        if policies.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                "Cannot delete leave type. It is used in leave policies. "
+                "Please delete all related policies first."
+            )
+        
+        # Check if there are any leave applications
+        applications = LeaveApplication.objects.filter(leave_type=instance)
+        if applications.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                "Cannot delete leave type. There are existing leave applications using this type."
+            )
+        
+        # Remove all balances for this leave type
+        LeaveBalance.objects.filter(leave_type=instance).delete()
+        
+        instance.delete()
+    
     @action(detail=True, methods=['get'])
     def policies(self, request, pk=None):
         """Get all policies for a specific leave type"""
@@ -96,6 +141,115 @@ class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_active=True)
         
         return queryset.order_by('leave_type__name', 'name')
+    
+    def perform_update(self, serializer):
+        """Handle leave policy status changes with balance management"""
+        policy = self.get_object()
+        old_is_active = policy.is_active
+        new_is_active = serializer.validated_data.get('is_active', old_is_active)
+        
+        # Save the changes first
+        serializer.save()
+        
+        # Handle balance changes if status changed
+        if old_is_active != new_is_active:
+            if new_is_active:
+                # Policy activated - assign balances
+                self._assign_policy_balances(policy)
+            else:
+                # Policy deactivated - remove balances
+                self._remove_policy_balances(policy)
+    
+    def perform_destroy(self, instance):
+        """Handle leave policy deletion with balance cleanup"""
+        # Remove all balances associated with this policy
+        self._remove_policy_balances(instance)
+        instance.delete()
+    
+    def _assign_policy_balances(self, policy):
+        """Assign leave balances to users based on the policy"""
+        from accounts.models import User
+        from datetime import date
+        from django.db import transaction
+        
+        current_year = date.today().year
+        
+        try:
+            with transaction.atomic():
+                # Get all active users
+                users = User.objects.filter(is_active=True)
+                
+                created_count = 0
+                updated_count = 0
+                
+                for user in users:
+                    # Check if policy is applicable to this user
+                    if policy.is_applicable_for_user(user):
+                        # Create or update balance
+                        balance, created = LeaveBalance.objects.get_or_create(
+                            user=user,
+                            leave_type=policy.leave_type,
+                            year=current_year,
+                            defaults={
+                                'policy': policy,
+                                'opening_balance': policy.annual_quota,
+                                'accrued_balance': 0,
+                                'used_balance': 0,
+                                'carried_forward': 0,
+                                'adjustment': 0
+                            }
+                        )
+                        
+                        if created:
+                            created_count += 1
+                        else:
+                            # Update existing balance with new policy if it didn't have one
+                            if not balance.policy or balance.policy.id != policy.id:
+                                balance.policy = policy
+                                balance.opening_balance = policy.annual_quota
+                                balance.save()
+                                updated_count += 1
+                
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"Policy {policy.name} activation: created {created_count} new balances, "
+                    f"updated {updated_count} existing balances"
+                )
+                
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error assigning balances for policy {policy.name}: {str(e)}")
+            raise
+    
+    def _remove_policy_balances(self, policy):
+        """Remove leave balances for users who had this policy assigned"""
+        from django.db import transaction
+        
+        try:
+            with transaction.atomic():
+                # Find all balances that reference this policy
+                balances_to_remove = LeaveBalance.objects.filter(policy=policy)
+                
+                # Log the removal
+                count = balances_to_remove.count()
+                if count > 0:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(
+                        f"Removing {count} leave balances for policy {policy.name} "
+                        f"({policy.leave_type.name})"
+                    )
+                    
+                    # Remove the balances
+                    balances_to_remove.delete()
+                
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error removing balances for policy {policy.name}: {str(e)}")
+            raise
     
     @action(detail=True, methods=['post'])
     def clone(self, request, pk=None):
