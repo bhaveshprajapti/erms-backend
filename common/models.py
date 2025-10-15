@@ -67,7 +67,6 @@ class ProjectType(models.Model):
 
 class EmployeeType(models.Model):
     name = models.CharField(max_length=50, unique=True)
-    description = models.TextField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -137,7 +136,6 @@ class Holiday(models.Model):
 
 class AppService(models.Model):
     name = models.CharField(max_length=100, unique=True)
-    description = models.TextField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

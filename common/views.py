@@ -1,12 +1,12 @@
 from rest_framework import viewsets
 from .models import (
     Address, StatusChoice, Priority, Tag, ProjectType, 
-    EmployeeType, Designation, Technology, Shift, Holiday
+    EmployeeType, Designation, Technology, Shift, Holiday, AppService
 )
 from .serializers import (
     AddressSerializer, StatusChoiceSerializer, PrioritySerializer, TagSerializer,
     ProjectTypeSerializer, EmployeeTypeSerializer, DesignationSerializer,
-    TechnologySerializer, ShiftSerializer, HolidaySerializer
+    TechnologySerializer, ShiftSerializer, HolidaySerializer, AppServiceSerializer
 )
 
 class AddressViewSet(viewsets.ModelViewSet):
@@ -48,4 +48,8 @@ class ShiftViewSet(viewsets.ModelViewSet):
 class HolidayViewSet(viewsets.ModelViewSet):
     queryset = Holiday.objects.all()
     serializer_class = HolidaySerializer
+
+class AppServiceViewSet(viewsets.ModelViewSet):
+    queryset = AppService.objects.all()
+    serializer_class = AppServiceSerializer
 

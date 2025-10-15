@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (
     Address, StatusChoice, Priority, Tag, ProjectType, 
-    EmployeeType, Designation, Technology, Shift, Holiday
+    EmployeeType, Designation, Technology, Shift, Holiday, AppService
 )
 
 class AddressSerializer(serializers.ModelSerializer):
@@ -52,4 +52,9 @@ class ShiftSerializer(serializers.ModelSerializer):
 class HolidaySerializer(serializers.ModelSerializer):
     class Meta:
         model = Holiday
+        fields = '__all__'
+
+class AppServiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AppService
         fields = '__all__'

@@ -39,7 +39,7 @@ class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            'id', 'username', 'first_name', 'last_name', 'email', 'phone',
+            'id', 'employee_id', 'username', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'is_active', 
             'is_staff', 'is_superuser', 'designations', 'technologies', 'shifts'
         )
@@ -67,7 +67,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            'id', 'username', 'password', 'plain_password', 'first_name', 'last_name', 'email', 'phone',
+            'id', 'employee_id', 'username', 'password', 'plain_password', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'birth_date',
             'gender', 'marital_status', 'is_active', 'is_staff', 'is_superuser', 'employee_details',
             'emergency_contact', 'emergency_phone', 'salary', 'designations', 'technologies', 'shifts',
@@ -80,7 +80,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True},
             'plain_password': {'write_only': True},
-            'folder_path': {'read_only': True}
+            'folder_path': {'read_only': True},
+            'employee_id': {'read_only': True},
+            'username': {'read_only': True}
         }
 
     def validate(self, data):
