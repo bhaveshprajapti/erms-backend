@@ -14,6 +14,27 @@ from .serializers import (
     TimeAdjustmentSerializer, ApprovalSerializer
 )
 
+def get_ist_time(utc_time=None):
+    """Convert UTC time to IST (Indian Standard Time)"""
+    if utc_time is None:
+        utc_time = timezone.now()
+    
+    # Convert to IST (UTC+5:30)
+    ist_timezone = ZoneInfo("Asia/Kolkata")
+    return utc_time.astimezone(ist_timezone)
+
+def format_duration(duration):
+    """Format timedelta to HH:MM:SS format"""
+    if not duration:
+        return '0:00:00'
+    
+    total_seconds = int(duration.total_seconds())
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    
+    return f"{hours}:{minutes:02d}:{seconds:02d}"
+
 class AttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
@@ -82,18 +103,19 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 if not hasattr(leave, 'half_day_type') or not leave.half_day_type:
                     return True, f"You have approved full-day leave on {date}. Check-in is not allowed."
                 
-                # For half-day leave, check timing
+                # For half-day leave, check timing using IST
                 if current_time and hasattr(leave, 'half_day_type') and leave.half_day_type:
-                    current_hour = current_time.hour
+                    ist_time = get_ist_time(current_time)
+                    current_hour = ist_time.hour
                     
                     if leave.half_day_type == 'morning':
-                        # Morning half-day leave (9 AM - 1 PM)
+                        # Morning half-day leave (9 AM - 1 PM IST)
                         if 9 <= current_hour < 13:
-                            return True, f"You have approved morning half-day leave (9 AM - 1 PM). Check-in allowed after 1 PM."
+                            return True, f"You have approved morning half-day leave (9 AM - 1 PM IST). Check-in allowed after 1 PM IST."
                     elif leave.half_day_type == 'afternoon':
-                        # Afternoon half-day leave (1 PM - 6 PM)
+                        # Afternoon half-day leave (1 PM - 6 PM IST)
                         if 13 <= current_hour < 18:
-                            return True, f"You have approved afternoon half-day leave (1 PM - 6 PM). Check-in allowed before 1 PM."
+                            return True, f"You have approved afternoon half-day leave (1 PM - 6 PM IST). Check-in allowed before 1 PM IST."
             
             return False, ""
         except StatusChoice.DoesNotExist:
@@ -151,15 +173,19 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             else:
                 # For regular shifts
                 if check_in_grace:
-                    # Allow check-in from 9 AM or 15 minutes after shift start, whichever is earlier
-                    grace_start = time(9, 0)  # 9:00 AM
-                    shift_grace_start = (datetime.combine(datetime.today(), start_time) + timedelta(minutes=15)).time()
+                    # Allow check-in 2 hours before shift start (e.g., 8 AM for 10 AM shift)
+                    early_start = (datetime.combine(datetime.today(), start_time) - timedelta(hours=2)).time()
+                    # Allow check-in up to 5 minutes after shift start (e.g., 10:05 AM for 10 AM shift)
+                    grace_end = (datetime.combine(datetime.today(), start_time) + timedelta(minutes=5)).time()
                     
-                    # Use the earlier time between 9 AM and shift start + 15 minutes
-                    effective_start = min(grace_start, shift_grace_start)
-                    
-                    if effective_start <= current_time_only <= end_time:
+                    if early_start <= current_time_only <= grace_end:
                         return True
+                    
+                    # Allow check-in after grace period but minimum 4 hours before shift end (considered half day)
+                    min_work_end = (datetime.combine(datetime.today(), end_time) - timedelta(hours=4)).time()
+                    if grace_end < current_time_only <= min_work_end:
+                        return True, "half_day"  # Return tuple indicating half day
+                        
                 elif allow_overtime:
                     # Allow check-out up to 4 hours after shift end for overtime
                     extended_end = (datetime.combine(datetime.today(), end_time) + timedelta(hours=4)).time()
@@ -171,7 +197,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         return False
 
     def _calculate_total_hours(self, sessions):
-        """Calculate total working hours from sessions"""
+        """Calculate total working hours from completed sessions only"""
         total_seconds = 0
         for session in sessions:
             if 'check_in' in session and 'check_out' in session:
@@ -179,6 +205,45 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 check_out = datetime.fromisoformat(session['check_out'])
                 duration = check_out - check_in
                 total_seconds += duration.total_seconds()
+        
+        return timedelta(seconds=total_seconds)
+    
+    def _calculate_realtime_total_hours(self, sessions, current_time, break_start_time=None):
+        """Calculate total working hours including current active session, excluding break time"""
+        total_seconds = 0
+        
+        # Ensure current_time is timezone-aware
+        if current_time.tzinfo is None:
+            current_time = timezone.make_aware(current_time)
+        
+        for session in sessions:
+            if 'check_in' in session:
+                check_in = datetime.fromisoformat(session['check_in'])
+                # Ensure check_in is timezone-aware
+                if check_in.tzinfo is None:
+                    check_in = timezone.make_aware(check_in)
+                
+                if 'check_out' in session:
+                    # Completed session
+                    check_out = datetime.fromisoformat(session['check_out'])
+                    if check_out.tzinfo is None:
+                        check_out = timezone.make_aware(check_out)
+                    duration = check_out - check_in
+                    total_seconds += duration.total_seconds()
+                else:
+                    # Active session - calculate up to current time, excluding break time
+                    if break_start_time:
+                        # Ensure break_start_time is timezone-aware
+                        if break_start_time.tzinfo is None:
+                            break_start_time = timezone.make_aware(break_start_time)
+                        # If on break, count only up to break start
+                        duration = break_start_time - check_in
+                    else:
+                        # If not on break, count up to current time
+                        duration = current_time - check_in
+                    
+                    if duration.total_seconds() > 0:
+                        total_seconds += duration.total_seconds()
         
         return timedelta(seconds=total_seconds)
 
@@ -221,16 +286,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'detail': 'No shift assigned. Contact admin.'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Check if within shift hours (with check-in grace period) or has approved flexible timing
-        within_shift = self._is_within_shift_hours(now, shifts, check_in_grace=True)
-        has_flexible_timing, flexible_message = self._check_flexible_timing_status(user, today, now)
-        
-        if not within_shift and not has_flexible_timing:
-            return Response({
-                'detail': 'Check-in allowed from 9 AM or up to 15 minutes after shift start time.'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Get or create attendance record for today
+        # Get or create attendance record for today to check if this is first check-in
         attendance, created = Attendance.objects.get_or_create(
             user=user,
             date=today,
@@ -238,11 +294,42 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         )
         
         sessions = attendance.sessions or []
+        is_first_checkin = len(sessions) == 0
+        
+        # Apply different validation based on check-in type
+        if is_first_checkin:
+            # First check-in of the day - apply strict shift validation
+            shift_result = self._is_within_shift_hours(now, shifts, check_in_grace=True)
+            within_shift = shift_result if isinstance(shift_result, bool) else shift_result[0]
+            is_half_day_checkin = isinstance(shift_result, tuple) and len(shift_result) > 1 and shift_result[1] == "half_day"
+            
+            has_flexible_timing, flexible_message = self._check_flexible_timing_status(user, today, now)
+            
+            if not within_shift and not has_flexible_timing:
+                return Response({
+                    'detail': 'Check-in allowed 2 hours before shift start, up to 5 minutes after shift start, or minimum 4 hours before shift end.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # Subsequent check-in (after break) - more lenient validation
+            # Just check if within reasonable hours (e.g., not in the middle of the night)
+            # Use IST for validation
+            ist_now = get_ist_time(now)
+            current_hour = ist_now.hour
+            if current_hour < 6 or current_hour > 23:  # Between 6 AM and 11 PM IST
+                return Response({
+                    'detail': 'Check-in not allowed during night hours (11 PM - 6 AM IST).'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if day has ended
+        if hasattr(attendance, 'day_ended') and attendance.day_ended:
+            return Response({
+                'detail': 'Day has already ended. Cannot check in again today.'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         # Check if user is already checked in (last session has no check_out)
         if sessions and 'check_out' not in sessions[-1]:
             return Response({
-                'detail': 'Already checked in. Please check out first.'
+                'detail': 'Already checked in. Please start break first.'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Add new session
@@ -263,8 +350,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=False, methods=['post'])
-    def check_out(self, request):
-        """Check-out action for employees"""
+    def start_break(self, request):
+        """Start break time for employees"""
         user = request.user
         now = timezone.now()
         today = now.date()
@@ -282,28 +369,218 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'detail': 'Not currently checked in. Please check in first.'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Get user shifts for overtime validation
-        shifts = self._get_user_shifts(user)
+        # Check if already on break
+        if hasattr(attendance, 'break_start_time') and attendance.break_start_time:
+            return Response({
+                'detail': 'Break already started.'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Allow check-out even outside shift hours (for overtime)
+        # Start break by ending current session (original working logic)
         location = request.data.get('location', {})
         sessions[-1]['check_out'] = now.isoformat()
         sessions[-1]['location_out'] = location
         
-        # Calculate totals
+        # Mark break start time and update total hours
         attendance.sessions = sessions
+        attendance.break_start_time = now
+        # Calculate and store total hours from completed sessions
         attendance.total_hours = self._calculate_total_hours(sessions)
         attendance.save()
         
-        break_time = self._calculate_break_time(sessions)
+        return Response({
+            'message': 'Break started successfully',
+            'break_start_time': now.isoformat(),
+            'session_count': len(sessions)
+        })
+
+    @action(detail=False, methods=['post'])
+    def end_break(self, request):
+        """End break time for employees"""
+        user = request.user
+        now = timezone.now()
+        today = now.date()
+        
+        try:
+            attendance = Attendance.objects.get(user=user, date=today)
+        except Attendance.DoesNotExist:
+            return Response({
+                'detail': 'No attendance record found for today.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if on break
+        if not hasattr(attendance, 'break_start_time') or not attendance.break_start_time:
+            return Response({
+                'detail': 'Not currently on break.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if already ended the day
+        if hasattr(attendance, 'day_ended') and attendance.day_ended:
+            return Response({
+                'detail': 'Day has already ended. Cannot resume work.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # End break by starting new session (original working logic)
+        sessions = attendance.sessions or []
+        location = request.data.get('location', {})
+        
+        # Calculate break duration and add to total break time
+        break_duration = now - attendance.break_start_time
+        if attendance.total_break_time is None:
+            attendance.total_break_time = break_duration
+        else:
+            attendance.total_break_time += break_duration
+        
+        # Start new session
+        new_session = {
+            'check_in': now.isoformat(),
+            'location_in': location
+        }
+        sessions.append(new_session)
+        
+        attendance.sessions = sessions
+        attendance.break_start_time = None
+        # Calculate and store total hours from completed sessions
+        attendance.total_hours = self._calculate_total_hours(sessions)
+        attendance.save()
         
         return Response({
-            'message': 'Checked out successfully',
-            'check_out_time': now.isoformat(),
+            'message': 'Break ended successfully. Work resumed.',
+            'check_in_time': now.isoformat(),
             'session_count': len(sessions),
-            'total_hours': str(attendance.total_hours),
-            'break_time': str(break_time)
+            'total_break_time': format_duration(attendance.total_break_time)
         })
+
+    @action(detail=False, methods=['post'])
+    def end_of_day(self, request):
+        """End of day action for employees"""
+        user = request.user
+        now = timezone.now()
+        today = now.date()
+        
+        try:
+            attendance = Attendance.objects.get(user=user, date=today)
+        except Attendance.DoesNotExist:
+            return Response({
+                'detail': 'No attendance record found for today.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if on break - must end break first
+        if hasattr(attendance, 'break_start_time') and attendance.break_start_time:
+            return Response({
+                'detail': 'Please end your break first before ending the day.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if already ended the day
+        if hasattr(attendance, 'day_ended') and attendance.day_ended:
+            return Response({
+                'detail': 'Day has already ended.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        sessions = attendance.sessions or []
+        
+        # If currently checked in, check out first
+        if sessions and 'check_out' not in sessions[-1]:
+            location = request.data.get('location', {})
+            sessions[-1]['check_out'] = now.isoformat()
+            sessions[-1]['location_out'] = location
+        
+        # Calculate final totals
+        attendance.sessions = sessions
+        attendance.total_hours = self._calculate_total_hours(sessions)
+        attendance.day_ended = True
+        attendance.day_end_time = now
+        
+        # Calculate day status based on working hours
+        day_status = self._calculate_day_status(attendance.total_hours)
+        attendance.day_status = day_status
+        
+        attendance.save()
+        
+        return Response({
+            'message': 'Day ended successfully',
+            'end_time': now.isoformat(),
+            'total_hours': format_duration(attendance.total_hours),
+            'day_status': day_status,
+            'total_break_time': format_duration(getattr(attendance, 'total_break_time', timedelta(0)))
+        })
+
+    def _calculate_day_status(self, total_hours):
+        """Calculate day status based on working hours"""
+        if not total_hours:
+            return 'Absent'
+        
+        # Convert to total seconds
+        total_seconds = total_hours.total_seconds()
+        
+        # 3h50m to 4h = Half day
+        if 3 * 3600 + 50 * 60 <= total_seconds <= 4 * 3600:
+            return 'Half Day'
+        
+        # 7h50m to 8h = Present (Full day)
+        if 7 * 3600 + 50 * 60 <= total_seconds <= 8 * 3600:
+            return 'Present'
+        
+        # Less than 3h50m = Absent
+        if total_seconds < 3 * 3600 + 50 * 60:
+            return 'Absent'
+        
+        # More than 4h but less than 7h50m = Half Day
+        if 4 * 3600 < total_seconds < 7 * 3600 + 50 * 60:
+            return 'Half Day'
+        
+        # More than 8h = Present (with overtime)
+        if total_seconds > 8 * 3600:
+            return 'Present'
+        
+        return 'Half Day'
+
+    @action(detail=False, methods=['post'])
+    def admin_reset_day(self, request):
+        """Admin action to reset day status and allow employee to check in again"""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({
+                'detail': 'Only admin can reset day status.'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        user_id = request.data.get('user_id')
+        date_str = request.data.get('date')
+        
+        if not user_id or not date_str:
+            return Response({
+                'detail': 'user_id and date are required.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            attendance = Attendance.objects.get(user_id=user_id, date=date)
+            
+            # Reset day status but preserve total_break_time (like total_hours)
+            attendance.day_ended = False
+            attendance.day_end_time = None
+            attendance.day_status = None
+            attendance.break_start_time = None
+            # DO NOT reset total_break_time - preserve it like total_hours
+            
+            # If user has sessions, set status back to Present
+            if attendance.sessions:
+                attendance.day_status = 'Present'
+            
+            attendance.save()
+            
+            return Response({
+                'message': 'Day status reset successfully. Employee can check in again.',
+                'date': date_str,
+                'user_id': user_id
+            })
+            
+        except Attendance.DoesNotExist:
+            return Response({
+                'detail': 'No attendance record found for the specified user and date.'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except ValueError:
+            return Response({
+                'detail': 'Invalid date format. Use YYYY-MM-DD.'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
     def _calculate_attendance_status(self, user, date, sessions, total_hours):
         """Calculate attendance status (Present/Absent/Half Day) based on sessions and hours"""
@@ -322,11 +599,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             # Check if user has active session (checked in but not out)
             has_active_session = any('check_out' not in session for session in sessions)
             
-            # For today's date, if user has checked in, show Present/Active
+            # For today's date, if user has checked in, show Active for table but Present for calendar
             if is_today and sessions:
                 if has_active_session:
-                    return 'Active'
+                    return 'Active'  # This will show in table, but calendar should show 'Present'
                 else:
+                    # Day completed but not ended - show Present
                     return 'Present'
             
             # For past dates or end-of-day calculation, use working hours logic
@@ -396,22 +674,48 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             total_sessions = len(sessions)
             completed_sessions = len([s for s in sessions if 'check_out' in s])
             
+            # Check if on break
+            is_on_break = hasattr(attendance, 'break_start_time') and attendance.break_start_time is not None
+            
+            # Check if day ended
+            day_ended = hasattr(attendance, 'day_ended') and attendance.day_ended
+            
             # Calculate attendance status
-            attendance_status = self._calculate_attendance_status(user, today, sessions, attendance.total_hours)
+            if day_ended:
+                attendance_status = getattr(attendance, 'day_status', 'Absent')
+                calendar_status = attendance_status  # Same for both when day ended
+            else:
+                attendance_status = self._calculate_attendance_status(user, today, sessions, attendance.total_hours)
+                # For calendar, show 'Present' instead of 'Active' when user has checked in
+                calendar_status = 'Present' if attendance_status == 'Active' else attendance_status
+            
+            # Use stored total hours (calculated from completed sessions)
+            total_hours = attendance.total_hours or timedelta(0)
             
             response_data = {
                 'date': today,
                 'is_checked_in': is_checked_in,
+                'is_on_break': is_on_break,
+                'day_ended': day_ended,
                 'total_sessions': total_sessions,
                 'completed_sessions': completed_sessions,
-                'total_hours': str(attendance.total_hours) if attendance.total_hours else '0:00:00',
-                'attendance_status': attendance_status,
+                'total_hours': format_duration(total_hours),
+                'total_break_time': format_duration(getattr(attendance, 'total_break_time', timedelta(0))),
+                'attendance_status': attendance_status,  # For table/UI
+                'calendar_status': calendar_status,      # For calendar
             }
             
             if sessions:
-                response_data['last_check_in'] = sessions[-1].get('check_in')
+                # Only provide last_check_in if there's actually an active session
+                if is_checked_in:  # Only if currently checked in (active session)
+                    response_data['last_check_in'] = sessions[-1].get('check_in')
                 response_data['last_check_out'] = sessions[-1].get('check_out')
-                response_data['break_time'] = str(self._calculate_break_time(sessions))
+            
+            if is_on_break:
+                response_data['break_start_time'] = attendance.break_start_time.isoformat()
+            
+            if day_ended:
+                response_data['day_end_time'] = attendance.day_end_time.isoformat() if attendance.day_end_time else None
             
             # Check if on leave
             is_on_leave, _ = self._check_leave_status(user, today, timezone.now())
@@ -427,10 +731,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return Response({
                 'date': today,
                 'is_checked_in': False,
+                'is_on_break': False,
+                'day_ended': False,
                 'total_sessions': 0,
                 'completed_sessions': 0,
                 'total_hours': '0:00:00',
-                'break_time': '0:00:00',
+                'total_break_time': '0:00:00',
                 'is_on_leave': is_on_leave,
                 'attendance_status': attendance_status
             })
