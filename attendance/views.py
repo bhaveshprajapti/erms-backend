@@ -561,9 +561,23 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             attendance.break_start_time = None
             # DO NOT reset total_break_time - preserve it like total_hours
             
-            # If user has sessions, set status back to Present
-            if attendance.sessions:
-                attendance.day_status = 'Present'
+            # Fix sessions state - ensure all sessions are properly closed
+            sessions = attendance.sessions or []
+            if sessions:
+                # Close any incomplete sessions (sessions without check_out)
+                for session in sessions:
+                    if 'check_out' not in session:
+                        # Close the incomplete session with current time
+                        session['check_out'] = timezone.now().isoformat()
+                        session['location_out'] = session.get('location_in', {})
+                
+                # Update sessions and recalculate total hours
+                attendance.sessions = sessions
+                attendance.total_hours = self._calculate_total_hours(sessions)
+                attendance.day_status = 'Present'  # Set to Present since user has completed sessions
+            else:
+                # No sessions - user never checked in
+                attendance.day_status = None
             
             attendance.save()
             

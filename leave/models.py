@@ -394,11 +394,20 @@ class LeaveApplication(models.Model):
         return self.status in ['draft', 'pending'] and self.start_date > date.today()
     
     def can_be_deleted_by_admin(self):
-        """Check if application can be deleted by admin (until end date)"""
-        # Admin can delete until the leave end date (inclusive)
-        # Block if already rejected/cancelled
-        if self.status in ['rejected', 'cancelled']:
+        """Check if application can be deleted by admin"""
+        # Admin can delete any application except:
+        # 1. Approved applications that have already ended (to maintain records)
+        # 2. Cancelled applications (user already cancelled, should preserve)
+        
+        # Allow deletion of rejected applications (admin can clean up)
+        if self.status == 'rejected':
+            return True
+            
+        # Block cancelled applications (user action, preserve record)
+        if self.status == 'cancelled':
             return False
+            
+        # For pending/approved applications, allow deletion until end date
         return self.end_date >= date.today()
     
     def approve(self, approved_by, comments=None):
