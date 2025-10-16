@@ -130,7 +130,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         """Get user's active shifts"""
         return user.shifts.filter(is_active=True)
 
-    def _is_within_shift_hours(self, current_time, shifts, allow_overtime=False):
+    def _is_within_shift_hours(self, current_time, shifts, allow_overtime=False, check_in_grace=False):
         """Check if current time is within any of the user's shift hours"""
         # Convert UTC time to IST (India Standard Time - UTC+5:30)
         ist_tz = ZoneInfo('Asia/Kolkata')
@@ -150,7 +150,17 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     return True
             else:
                 # For regular shifts
-                if allow_overtime:
+                if check_in_grace:
+                    # Allow check-in from 9 AM or 15 minutes after shift start, whichever is earlier
+                    grace_start = time(9, 0)  # 9:00 AM
+                    shift_grace_start = (datetime.combine(datetime.today(), start_time) + timedelta(minutes=15)).time()
+                    
+                    # Use the earlier time between 9 AM and shift start + 15 minutes
+                    effective_start = min(grace_start, shift_grace_start)
+                    
+                    if effective_start <= current_time_only <= end_time:
+                        return True
+                elif allow_overtime:
                     # Allow check-out up to 4 hours after shift end for overtime
                     extended_end = (datetime.combine(datetime.today(), end_time) + timedelta(hours=4)).time()
                     if start_time <= current_time_only <= extended_end:
@@ -211,13 +221,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'detail': 'No shift assigned. Contact admin.'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Check if within shift hours or has approved flexible timing
-        within_shift = self._is_within_shift_hours(now, shifts)
+        # Check if within shift hours (with check-in grace period) or has approved flexible timing
+        within_shift = self._is_within_shift_hours(now, shifts, check_in_grace=True)
         has_flexible_timing, flexible_message = self._check_flexible_timing_status(user, today, now)
         
         if not within_shift and not has_flexible_timing:
             return Response({
-                'detail': 'Check-in not allowed outside shift hours.'
+                'detail': 'Check-in allowed from 9 AM or up to 15 minutes after shift start time.'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get or create attendance record for today
@@ -295,6 +305,83 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             'break_time': str(break_time)
         })
 
+    def _calculate_attendance_status(self, user, date, sessions, total_hours):
+        """Calculate attendance status (Present/Absent/Half Day) based on sessions and hours"""
+        today = timezone.now().date()
+        is_today = date == today
+        has_approved_leave = self._check_leave_status(user, date, timezone.now())[0]
+        
+        # If no sessions recorded
+        if not sessions:
+            if has_approved_leave:
+                return 'On Leave'
+            return 'Absent'
+        
+        # If user has sessions
+        if sessions:
+            # Check if user has active session (checked in but not out)
+            has_active_session = any('check_out' not in session for session in sessions)
+            
+            # For today's date, if user has checked in, show Present/Active
+            if is_today and sessions:
+                if has_active_session:
+                    return 'Active'
+                else:
+                    return 'Present'
+            
+            # For past dates or end-of-day calculation, use working hours logic
+            total_seconds = 0
+            if total_hours:
+                time_parts = str(total_hours).split(':')
+                hours = int(time_parts[0]) if len(time_parts) > 0 else 0
+                minutes = int(time_parts[1]) if len(time_parts) > 1 else 0
+                seconds = float(time_parts[2]) if len(time_parts) > 2 else 0
+                total_seconds = hours * 3600 + minutes * 60 + seconds
+            
+            # Get user shifts to determine minimum working hours
+            shifts = self._get_user_shifts(user)
+            min_hours = 8 * 3600  # Default 8 hours in seconds
+            
+            if shifts.exists():
+                shift = shifts.first()
+                start_time = shift.start_time
+                end_time = shift.end_time
+                
+                # Calculate shift duration
+                start_seconds = start_time.hour * 3600 + start_time.minute * 60
+                end_seconds = end_time.hour * 3600 + end_time.minute * 60
+                
+                if end_seconds > start_seconds:
+                    min_hours = end_seconds - start_seconds
+                else:
+                    # Overnight shift
+                    min_hours = (24 * 3600 - start_seconds) + end_seconds
+            
+            # Determine status based on working hours
+            # If user had approved leave but still came to office, prioritize actual attendance
+            if total_seconds >= min_hours * 0.75:  # 75% of shift duration
+                if has_approved_leave:
+                    return 'Present (Despite Leave)'
+                return 'Present'
+            elif total_seconds >= min_hours * 0.5:  # 50% of shift duration
+                if has_approved_leave:
+                    return 'Half Day (Despite Leave)'
+                return 'Half Day'
+            elif total_seconds > 0:  # Has some working time
+                if has_approved_leave:
+                    return 'Half Day (Despite Leave)'
+                return 'Half Day'
+            else:
+                # Has sessions but no working time (check-in only)
+                if has_approved_leave:
+                    return 'On Leave'
+                return 'Absent'
+        
+        # Fallback
+        if has_approved_leave:
+            return 'On Leave'
+        return 'Absent'
+
     @action(detail=False, methods=['get'])
     def status(self, request):
         """Get current attendance status for the user"""
@@ -309,12 +396,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             total_sessions = len(sessions)
             completed_sessions = len([s for s in sessions if 'check_out' in s])
             
+            # Calculate attendance status
+            attendance_status = self._calculate_attendance_status(user, today, sessions, attendance.total_hours)
+            
             response_data = {
                 'date': today,
                 'is_checked_in': is_checked_in,
                 'total_sessions': total_sessions,
                 'completed_sessions': completed_sessions,
                 'total_hours': str(attendance.total_hours) if attendance.total_hours else '0:00:00',
+                'attendance_status': attendance_status,
             }
             
             if sessions:
@@ -329,6 +420,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return Response(response_data)
             
         except Attendance.DoesNotExist:
+            # Check if on leave when no attendance record
+            is_on_leave, _ = self._check_leave_status(user, today, timezone.now())
+            attendance_status = 'On Leave' if is_on_leave else 'Absent'
+            
             return Response({
                 'date': today,
                 'is_checked_in': False,
@@ -336,7 +431,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'completed_sessions': 0,
                 'total_hours': '0:00:00',
                 'break_time': '0:00:00',
-                'is_on_leave': self._check_leave_status(user, today, timezone.now())[0]
+                'is_on_leave': is_on_leave,
+                'attendance_status': attendance_status
             })
 
 class LeaveRequestViewSet(viewsets.ModelViewSet):

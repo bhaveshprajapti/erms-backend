@@ -64,11 +64,12 @@ class TechnologySerializer(serializers.ModelSerializer):
         
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Make all fields optional for partial updates
+        # Make all fields optional for partial updates (when instance exists = update operation)
         if self.instance is not None:
             for field_name, field in self.fields.items():
                 field.required = False
-                field.allow_blank = True
+                if hasattr(field, 'allow_blank'):
+                    field.allow_blank = True
 
 class ShiftSerializer(serializers.ModelSerializer):
     class Meta:
@@ -77,11 +78,12 @@ class ShiftSerializer(serializers.ModelSerializer):
         
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Make all fields optional for partial updates
+        # Make all fields optional for partial updates (when instance exists = update operation)
         if self.instance is not None:
             for field_name, field in self.fields.items():
                 field.required = False
-                field.allow_blank = True
+                if hasattr(field, 'allow_blank'):
+                    field.allow_blank = True
 
 class HolidaySerializer(serializers.ModelSerializer):
     class Meta:

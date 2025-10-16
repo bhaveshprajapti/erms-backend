@@ -34,105 +34,24 @@ def assign_leave_balances_for_new_user(sender, instance, created, **kwargs):
             logger.error(f"Error assigning leave balances for new user {instance.username}: {str(e)}")
 
 
-@receiver(post_save, sender=LeaveTypePolicy)
-def handle_policy_changes(sender, instance, created, **kwargs):
-    """
-    Handle leave policy activation/deactivation and updates
-    """
-    try:
-        if created:
-            # New policy created
-            if instance.is_active:
-                assign_policy_balances(instance)
-        else:
-            # Existing policy updated - check if status changed
-            # We need to get the old value from database since Django doesn't provide it
-            # For now, we'll handle both activation and deactivation
-            if instance.is_active:
-                # Policy is now active - assign balances
-                assign_policy_balances(instance)
-            else:
-                # Policy is now inactive - remove balances
-                remove_policy_balances(instance)
-                
-    except Exception as e:
-        logger.error(f"Error handling policy changes for {instance.name}: {str(e)}")
+# @receiver(post_save, sender=LeaveTypePolicy)
+# Policy balance management is now handled in views.py for better control
+# def handle_policy_changes(sender, instance, created, **kwargs):
 
 
-@receiver(pre_delete, sender=LeaveTypePolicy)
-def handle_policy_deletion(sender, instance, **kwargs):
-    """
-    Handle leave policy deletion - remove all associated balances
-    """
-    try:
-        remove_policy_balances(instance)
-    except Exception as e:
-        logger.error(f"Error handling policy deletion for {instance.name}: {str(e)}")
+# @receiver(pre_delete, sender=LeaveTypePolicy)
+# Policy deletion is now handled in views.py for better control
+# def handle_policy_deletion(sender, instance, **kwargs):
 
 
-@receiver(pre_save, sender=LeaveType)
-def validate_leave_type_deactivation(sender, instance, **kwargs):
-    """
-    Validate leave type deactivation - prevent if used in active policies
-    """
-    if instance.pk:  # Only for updates, not creation
-        try:
-            old_instance = LeaveType.objects.get(pk=instance.pk)
-            
-            # Check if being deactivated
-            if old_instance.is_active and not instance.is_active:
-                active_policies = LeaveTypePolicy.objects.filter(
-                    leave_type=instance,
-                    is_active=True
-                )
-                if active_policies.exists():
-                    from django.core.exceptions import ValidationError
-                    raise ValidationError(
-                        "Cannot deactivate leave type. It is currently used in active policies. "
-                        "Please deactivate all related policies first."
-                    )
-        except LeaveType.DoesNotExist:
-            pass
-        except ValidationError:
-            # Re-raise ValidationError
-            raise
-        except Exception as e:
-            logger.error(f"Error validating leave type deactivation: {str(e)}")
-            raise
+# @receiver(pre_save, sender=LeaveType)
+# Leave type validation is now handled in views.py for proper API error handling
+# def validate_leave_type_deactivation(sender, instance, **kwargs):
 
 
-@receiver(pre_delete, sender=LeaveType)
-def validate_leave_type_deletion(sender, instance, **kwargs):
-    """
-    Validate leave type deletion - prevent if used in any policies or applications
-    """
-    try:
-        from django.core.exceptions import ValidationError
-        
-        # Check if used in policies
-        policies = LeaveTypePolicy.objects.filter(leave_type=instance)
-        if policies.exists():
-            raise ValidationError(
-                "Cannot delete leave type. It is used in leave policies. "
-                "Please delete all related policies first."
-            )
-        
-        # Check for existing leave applications
-        applications = LeaveApplication.objects.filter(leave_type=instance)
-        if applications.exists():
-            raise ValidationError(
-                "Cannot delete leave type. There are existing leave applications using this type."
-            )
-        
-        # Remove all balances for this leave type (this is safe)
-        LeaveBalance.objects.filter(leave_type=instance).delete()
-        
-    except ValidationError:
-        # Re-raise ValidationError
-        raise
-    except Exception as e:
-        logger.error(f"Error validating leave type deletion: {str(e)}")
-        raise
+# @receiver(pre_delete, sender=LeaveType)
+# Leave type deletion validation is now handled in views.py for proper API error handling
+# def validate_leave_type_deletion(sender, instance, **kwargs):
 
 
 def assign_policy_balances(policy):
