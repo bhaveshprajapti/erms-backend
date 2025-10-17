@@ -146,7 +146,9 @@ class SessionLog(models.Model):
     def log_event(cls, user, event_type, date=None, session_count=None, location=None, request=None, notes=None):
         """Helper method to log events with optional request context"""
         if date is None:
-            date = timezone.now().date()
+            # Use IST date for business logic
+            from common.timezone_utils import get_current_ist_date
+            date = get_current_ist_date()
         
         # Extract request metadata if available
         ip_address = None
@@ -219,7 +221,9 @@ class SessionLog(models.Model):
         for session in expired_sessions:
             try:
                 # Check if user has an active attendance record for today
-                today = timezone.now().date()
+                # Use IST date for business logic
+                from common.timezone_utils import get_current_ist_date
+                today = get_current_ist_date()
                 attendance = Attendance.objects.filter(
                     user=session.user,
                     date=today,

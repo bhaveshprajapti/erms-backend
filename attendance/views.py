@@ -7,6 +7,7 @@ from django.utils import timezone
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from common.models import StatusChoice
+from common.timezone_utils import get_ist_time, get_ist_date, get_current_ist_date
 from .models import Attendance, LeaveRequest, TimeAdjustment, Approval, SessionLog
 from leave.models import FlexibleTimingRequest
 from .serializers import (
@@ -14,14 +15,7 @@ from .serializers import (
     TimeAdjustmentSerializer, ApprovalSerializer
 )
 
-def get_ist_time(utc_time=None):
-    """Convert UTC time to IST (Indian Standard Time)"""
-    if utc_time is None:
-        utc_time = timezone.now()
-    
-    # Convert to IST (UTC+5:30)
-    ist_timezone = ZoneInfo("Asia/Kolkata")
-    return utc_time.astimezone(ist_timezone)
+# IST utilities moved to common.timezone_utils
 
 def format_duration(duration):
     """Format timedelta to HH:MM:SS format"""
@@ -269,8 +263,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     def check_in(self, request):
         """Check-in action for employees with session logging and timeout validation"""
         user = request.user
-        now = timezone.now()
-        today = now.date()
+        now = timezone.now()  # Store UTC
+        today = get_ist_date(now)  # Use IST date for business logic
         
         # CRITICAL: Check for expired sessions and auto-end workdays (with backward compatibility)
         try:
@@ -386,8 +380,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     def start_break(self, request):
         """Start break time for employees with session validation"""
         user = request.user
-        now = timezone.now()
-        today = now.date()
+        now = timezone.now()  # Store UTC
+        today = get_ist_date(now)  # Use IST date for business logic
         
         # CRITICAL: Validate active session (with backward compatibility)
         try:
@@ -460,8 +454,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     def end_break(self, request):
         """End break time for employees with session validation"""
         user = request.user
-        now = timezone.now()
-        today = now.date()
+        now = timezone.now()  # Store UTC
+        today = get_ist_date(now)  # Use IST date for business logic
         
         # CRITICAL: Validate active session (with backward compatibility)
         try:
@@ -547,8 +541,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     def end_of_day(self, request):
         """End of day action for employees with session validation"""
         user = request.user
-        now = timezone.now()
-        today = now.date()
+        now = timezone.now()  # Store UTC
+        today = get_ist_date(now)  # Use IST date for business logic
         
         # CRITICAL: Validate active session (with backward compatibility)
         try:
@@ -722,7 +716,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     def _calculate_attendance_status(self, user, date, sessions, total_hours):
         """Calculate attendance status (Present/Absent/Half Day) based on sessions and hours"""
-        today = timezone.now().date()
+        today = get_current_ist_date()  # Use IST date for business logic
         is_today = date == today
         has_approved_leave = self._check_leave_status(user, date, timezone.now())[0]
         
@@ -802,7 +796,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     def status(self, request):
         """Get current attendance status for the user - BACKEND IS SOURCE OF TRUTH"""
         user = request.user
-        today = timezone.now().date()
+        today = get_current_ist_date()  # Use IST date for business logic
         
         # CRITICAL: Check for expired sessions and auto-end workdays BEFORE returning status
         # Handle case where SessionLog table doesn't exist yet (backward compatibility)

@@ -103,7 +103,9 @@ class LeaveTypePolicy(models.Model):
         
         # Check tenure
         if user.joining_date and self.min_tenure_days > 0:
-            tenure_days = (date.today() - user.joining_date).days
+            from common.timezone_utils import get_current_ist_date
+            today_ist = get_current_ist_date()
+            tenure_days = (today_ist - user.joining_date).days
             if tenure_days < self.min_tenure_days:
                 return False
         
@@ -111,8 +113,9 @@ class LeaveTypePolicy(models.Model):
         if user.is_on_probation and not self.available_during_probation:
             return False
         
-        # Check effective dates
-        today = date.today()
+        # Check effective dates using IST
+        from common.timezone_utils import get_current_ist_date
+        today = get_current_ist_date()
         if self.effective_from > today:
             return False
         if self.effective_to and self.effective_to < today:
