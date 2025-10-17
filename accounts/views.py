@@ -263,6 +263,32 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
 
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def custom_logout(request):
+    """
+    Custom logout view that logs the logout event for session management.
+    """
+    user = request.user
+    
+    # Log the logout event (with backward compatibility)
+    try:
+        from attendance.models import SessionLog
+        SessionLog.log_event(
+            user=user,
+            event_type='logout',
+            request=request,
+            notes='User initiated logout'
+        )
+    except Exception as e:
+        # SessionLog table might not exist yet - continue without session logging
+        print(f"Session logging not available: {e}")
+    
+    return Response({
+        'message': 'Logout successful.'
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
 @permission_classes([AllowAny])
 def custom_login(request):
     """
@@ -321,6 +347,19 @@ def custom_login(request):
     # Create JWT tokens
     refresh = RefreshToken.for_user(authenticated_user)
     access_token = refresh.access_token
+    
+    # CRITICAL: Log the login event for session management and security (with backward compatibility)
+    try:
+        from attendance.models import SessionLog
+        SessionLog.log_event(
+            user=authenticated_user,
+            event_type='login',
+            request=request,
+            notes=f'Successful login from {request.META.get("HTTP_USER_AGENT", "Unknown")[:100]}'
+        )
+    except Exception as e:
+        # SessionLog table might not exist yet - continue without session logging
+        print(f"Session logging not available: {e}")
     
     # Prepare user data
     user_data = {

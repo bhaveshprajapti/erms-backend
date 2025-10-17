@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     UserViewSet, OrganizationViewSet, RoleViewSet, 
     PermissionViewSet, ModuleViewSet, ProfileUpdateRequestViewSet,
-    custom_login
+    custom_login, custom_logout
 )
 
 router = DefaultRouter()
@@ -17,6 +17,7 @@ router.register(r'profile-update-requests', ProfileUpdateRequestViewSet, basenam
 
 urlpatterns = [
     path('login', custom_login, name='custom_login'),
+    path('logout', custom_logout, name='custom_logout'),
     path('token/refresh', TokenRefreshView.as_view(), name='token_refresh'),
     path('', include(router.urls)),
 ]

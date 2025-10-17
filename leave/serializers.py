@@ -154,7 +154,7 @@ class LeaveApplicationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'applied_at', 'updated_at', 'approved_by', 'approved_at',
-            'can_be_cancelled', 'can_be_edited', 'can_be_deleted_by_user', 'can_be_deleted_by_admin', 'total_days'
+            'can_be_cancelled', 'can_be_edited', 'can_be_deleted_by_user', 'can_be_deleted_by_admin'
         ]
     
     def get_comments_count(self, obj):
@@ -230,8 +230,14 @@ class LeaveApplicationSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Create leave application with auto-calculated total_days"""
-        # The total_days will be calculated in the model's clean method
-        return super().create(validated_data)
+        # If total_days is provided, use it; otherwise it will be calculated in clean()
+        # The model's save() method calls clean() which recalculates total_days
+        instance = super().create(validated_data)
+        # Ensure clean() was called to calculate total_days
+        if instance.total_days == 0 and instance.start_date and instance.end_date:
+            instance.clean()
+            instance.save()
+        return instance
 
 
 class LeaveApplicationCreateSerializer(serializers.ModelSerializer):

@@ -19,6 +19,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
     attendance_status = serializers.SerializerMethodField()
     total_hours = serializers.SerializerMethodField()
     total_break_time = serializers.SerializerMethodField()
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
     
     class Meta:
         model = Attendance
