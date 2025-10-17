@@ -7,7 +7,7 @@ from django.utils import timezone
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from common.models import StatusChoice
-from .models import Attendance, LeaveRequest, TimeAdjustment, Approval
+from .models import Attendance, LeaveRequest, TimeAdjustment, Approval, SessionLog
 from leave.models import FlexibleTimingRequest
 from .serializers import (
     AttendanceSerializer, LeaveRequestSerializer, 
@@ -267,10 +267,30 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def check_in(self, request):
-        """Check-in action for employees"""
+        """Check-in action for employees with session logging and timeout validation"""
         user = request.user
         now = timezone.now()
         today = now.date()
+        
+        # CRITICAL: Check for expired sessions and auto-end workdays (with backward compatibility)
+        try:
+            SessionLog.check_and_handle_expired_sessions()
+            
+            # Validate active session - user must have logged in within timeout period
+            active_session = SessionLog.get_active_session(user)
+            if active_session and active_session.is_session_expired():
+                return Response({
+                    'detail': 'Session expired or not found. Please log in again to continue.',
+                    'session_expired': True
+                }, status=status.HTTP_401_UNAUTHORIZED)
+            
+            # Update session activity
+            if active_session:
+                active_session.update_activity()
+        except Exception as e:
+            # SessionLog table might not exist yet - continue without session management
+            print(f"Session management not available in check_in: {e}")
+            active_session = None
         
         # Check if user is on leave
         is_on_leave, leave_message = self._check_leave_status(user, today, now)
@@ -343,6 +363,19 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         attendance.sessions = sessions
         attendance.save()
         
+        # Log the check-in event (with backward compatibility)
+        try:
+            SessionLog.log_event(
+                user=user,
+                event_type='check_in',
+                date=today,
+                session_count=len(sessions),
+                location=location,
+                request=request
+            )
+        except Exception as e:
+            print(f"Failed to log check-in event: {e}")
+        
         return Response({
             'message': 'Checked in successfully',
             'check_in_time': now.isoformat(),
@@ -351,10 +384,27 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def start_break(self, request):
-        """Start break time for employees"""
+        """Start break time for employees with session validation"""
         user = request.user
         now = timezone.now()
         today = now.date()
+        
+        # CRITICAL: Validate active session (with backward compatibility)
+        try:
+            active_session = SessionLog.get_active_session(user)
+            if active_session and active_session.is_session_expired():
+                return Response({
+                    'detail': 'Session expired. Please log in again to continue.',
+                    'session_expired': True
+                }, status=status.HTTP_401_UNAUTHORIZED)
+            
+            # Update session activity
+            if active_session:
+                active_session.update_activity()
+        except Exception as e:
+            # SessionLog table might not exist yet - continue without session management
+            print(f"Session management not available in start_break: {e}")
+            active_session = None
         
         try:
             attendance = Attendance.objects.get(user=user, date=today)
@@ -387,6 +437,19 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         attendance.total_hours = self._calculate_total_hours(sessions)
         attendance.save()
         
+        # Log the start break event (with backward compatibility)
+        try:
+            SessionLog.log_event(
+                user=user,
+                event_type='start_break',
+                date=today,
+                session_count=len(sessions),
+                location=location,
+                request=request
+            )
+        except Exception as e:
+            print(f"Failed to log start_break event: {e}")
+        
         return Response({
             'message': 'Break started successfully',
             'break_start_time': now.isoformat(),
@@ -395,10 +458,27 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def end_break(self, request):
-        """End break time for employees"""
+        """End break time for employees with session validation"""
         user = request.user
         now = timezone.now()
         today = now.date()
+        
+        # CRITICAL: Validate active session (with backward compatibility)
+        try:
+            active_session = SessionLog.get_active_session(user)
+            if active_session and active_session.is_session_expired():
+                return Response({
+                    'detail': 'Session expired. Please log in again to continue.',
+                    'session_expired': True
+                }, status=status.HTTP_401_UNAUTHORIZED)
+            
+            # Update session activity
+            if active_session:
+                active_session.update_activity()
+        except Exception as e:
+            # SessionLog table might not exist yet - continue without session management
+            print(f"Session management not available in end_break: {e}")
+            active_session = None
         
         try:
             attendance = Attendance.objects.get(user=user, date=today)
@@ -443,6 +523,19 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         attendance.total_hours = self._calculate_total_hours(sessions)
         attendance.save()
         
+        # Log the end break event (with backward compatibility)
+        try:
+            SessionLog.log_event(
+                user=user,
+                event_type='end_break',
+                date=today,
+                session_count=len(sessions),
+                location=location,
+                request=request
+            )
+        except Exception as e:
+            print(f"Failed to log end_break event: {e}")
+        
         return Response({
             'message': 'Break ended successfully. Work resumed.',
             'check_in_time': now.isoformat(),
@@ -452,10 +545,27 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def end_of_day(self, request):
-        """End of day action for employees"""
+        """End of day action for employees with session validation"""
         user = request.user
         now = timezone.now()
         today = now.date()
+        
+        # CRITICAL: Validate active session (with backward compatibility)
+        try:
+            active_session = SessionLog.get_active_session(user)
+            if active_session and active_session.is_session_expired():
+                return Response({
+                    'detail': 'Session expired. Please log in again to continue.',
+                    'session_expired': True
+                }, status=status.HTTP_401_UNAUTHORIZED)
+            
+            # Update session activity
+            if active_session:
+                active_session.update_activity()
+        except Exception as e:
+            # SessionLog table might not exist yet - continue without session management
+            print(f"Session management not available in end_of_day: {e}")
+            active_session = None
         
         try:
             attendance = Attendance.objects.get(user=user, date=today)
@@ -495,6 +605,20 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         attendance.day_status = day_status
         
         attendance.save()
+        
+        # Log the end of day event (with backward compatibility)
+        try:
+            SessionLog.log_event(
+                user=user,
+                event_type='end_of_day',
+                date=today,
+                session_count=len(sessions),
+                location=request.data.get('location', {}),
+                request=request,
+                notes=f'Day status: {day_status}, Total hours: {format_duration(attendance.total_hours)}'
+            )
+        except Exception as e:
+            print(f"Failed to log end_of_day event: {e}")
         
         return Response({
             'message': 'Day ended successfully',
@@ -676,23 +800,95 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def status(self, request):
-        """Get current attendance status for the user"""
+        """Get current attendance status for the user - BACKEND IS SOURCE OF TRUTH"""
         user = request.user
         today = timezone.now().date()
+        
+        # CRITICAL: Check for expired sessions and auto-end workdays BEFORE returning status
+        # Handle case where SessionLog table doesn't exist yet (backward compatibility)
+        try:
+            expired_count = SessionLog.check_and_handle_expired_sessions()
+            if expired_count > 0:
+                print(f"Auto-ended {expired_count} expired sessions")
+        except Exception as e:
+            # SessionLog table might not exist yet - continue without session management
+            print(f"Session management not available: {e}")
+            expired_count = 0
+        
+        # Validate current session (with backward compatibility)
+        try:
+            active_session = SessionLog.get_active_session(user)
+            session_valid = active_session and not active_session.is_session_expired()
+        except Exception as e:
+            # SessionLog table might not exist yet - assume session is valid
+            print(f"Session validation not available: {e}")
+            active_session = None
+            session_valid = True
+        
+        # If session is valid, update activity (with backward compatibility)
+        if session_valid and active_session:
+            try:
+                active_session.update_activity()
+            except Exception as e:
+                print(f"Session activity update failed: {e}")
         
         try:
             attendance = Attendance.objects.get(user=user, date=today)
             sessions = attendance.sessions or []
             
-            is_checked_in = sessions and 'check_out' not in sessions[-1]
+            # BACKEND DETERMINES STATE - not frontend localStorage
+            # CRITICAL FIX: Ensure boolean result, not array
+            is_checked_in = bool(sessions and 'check_out' not in sessions[-1] and not attendance.day_ended)
             total_sessions = len(sessions)
             completed_sessions = len([s for s in sessions if 'check_out' in s])
             
-            # Check if on break
-            is_on_break = hasattr(attendance, 'break_start_time') and attendance.break_start_time is not None
+            # Check if on break - ONLY trust backend state
+            # CRITICAL FIX: Ensure boolean result
+            is_on_break = bool(
+                hasattr(attendance, 'break_start_time') and 
+                attendance.break_start_time is not None and 
+                not attendance.day_ended
+            )
             
-            # Check if day ended
-            day_ended = hasattr(attendance, 'day_ended') and attendance.day_ended
+            # Check if day ended - BACKEND AUTHORITY
+            # CRITICAL FIX: Ensure boolean result
+            day_ended = bool(hasattr(attendance, 'day_ended') and attendance.day_ended)
+            
+            # If session expired but day not ended, auto-end the day (with backward compatibility)
+            if not session_valid and not day_ended and sessions and active_session:
+                try:
+                    # Auto-end the workday due to session timeout
+                    if sessions and 'check_out' not in sessions[-1]:
+                        # Auto check-out with last known activity time
+                        checkout_time = active_session.last_activity if active_session else timezone.now()
+                        sessions[-1]['check_out'] = checkout_time.isoformat()
+                        sessions[-1]['location_out'] = {'lat': 0, 'lng': 0, 'auto_checkout': True}
+                    
+                    attendance.sessions = sessions
+                    attendance.day_ended = True
+                    attendance.day_end_time = checkout_time if active_session else timezone.now()
+                    attendance.break_start_time = None  # Clear any active break
+                    attendance.total_hours = self._calculate_total_hours(sessions)
+                    attendance.day_status = self._calculate_day_status(attendance.total_hours)
+                    attendance.save()
+                    
+                    # Log the auto-end event (with error handling)
+                    try:
+                        SessionLog.log_event(
+                            user=user,
+                            event_type='auto_end_day',
+                            date=today,
+                            notes='Auto-ended due to session timeout'
+                        )
+                    except Exception as e:
+                        print(f"Failed to log auto-end event: {e}")
+                    
+                    # Update local variables
+                    is_checked_in = False
+                    is_on_break = False
+                    day_ended = True
+                except Exception as e:
+                    print(f"Failed to auto-end workday: {e}")
             
             # Calculate attendance status
             if day_ended:
@@ -708,22 +904,24 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             
             response_data = {
                 'date': today,
-                'is_checked_in': is_checked_in,
-                'is_on_break': is_on_break,
-                'day_ended': day_ended,
+                'is_checked_in': is_checked_in,  # BACKEND AUTHORITY
+                'is_on_break': is_on_break,      # BACKEND AUTHORITY
+                'day_ended': day_ended,          # BACKEND AUTHORITY
                 'total_sessions': total_sessions,
                 'completed_sessions': completed_sessions,
                 'total_hours': format_duration(total_hours),
                 'total_break_time': format_duration(getattr(attendance, 'total_break_time', timedelta(0))),
                 'attendance_status': attendance_status,  # For table/UI
                 'calendar_status': calendar_status,      # For calendar
+                'session_valid': session_valid,          # Frontend can use this for session management
             }
             
             if sessions:
                 # Only provide last_check_in if there's actually an active session
                 if is_checked_in:  # Only if currently checked in (active session)
                     response_data['last_check_in'] = sessions[-1].get('check_in')
-                response_data['last_check_out'] = sessions[-1].get('check_out')
+                if sessions[-1].get('check_out'):
+                    response_data['last_check_out'] = sessions[-1].get('check_out')
             
             if is_on_break:
                 response_data['break_start_time'] = attendance.break_start_time.isoformat()
@@ -744,15 +942,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             
             return Response({
                 'date': today,
-                'is_checked_in': False,
-                'is_on_break': False,
-                'day_ended': False,
+                'is_checked_in': False,          # BACKEND AUTHORITY
+                'is_on_break': False,            # BACKEND AUTHORITY
+                'day_ended': False,              # BACKEND AUTHORITY
                 'total_sessions': 0,
                 'completed_sessions': 0,
                 'total_hours': '0:00:00',
                 'total_break_time': '0:00:00',
                 'is_on_leave': is_on_leave,
-                'attendance_status': attendance_status
+                'attendance_status': attendance_status,
+                'session_valid': session_valid,  # Frontend can use this for session management
             })
 
 class LeaveRequestViewSet(viewsets.ModelViewSet):
