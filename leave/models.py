@@ -321,7 +321,7 @@ class LeaveApplication(models.Model):
     # Leave details
     start_date = models.DateField()
     end_date = models.DateField()
-    total_days = models.DecimalField(max_digits=5, decimal_places=2)
+    total_days = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     is_half_day = models.BooleanField(default=False)
     half_day_period = models.CharField(max_length=10, choices=[('morning', 'Morning'), ('afternoon', 'Afternoon')], null=True, blank=True)
     

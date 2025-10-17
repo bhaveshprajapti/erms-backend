@@ -71,48 +71,39 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     def _check_leave_status(self, user, date, current_time=None):
         """Check if user is on approved leave for the given date and time"""
         try:
-            # Try to get approved status, but also check by status value directly
-            approved_status = None
-            try:
-                approved_status = StatusChoice.objects.get(category='leave_status', name__iexact='Approved')
-            except StatusChoice.DoesNotExist:
-                pass
+            from leave.models import LeaveApplication
             
-            # Filter for approved leaves - check both by status object and status value
-            leave_requests = LeaveRequest.objects.filter(
+            # Filter for approved leaves (status = 'approved')
+            leave_applications = LeaveApplication.objects.filter(
                 user=user,
                 start_date__lte=date,
-                end_date__gte=date
+                end_date__gte=date,
+                status='approved'  # Only check approved leaves
             )
             
-            # Filter for approved leaves only (status = 2 or approved_status object)
-            if approved_status:
-                leave_requests = leave_requests.filter(status=approved_status)
-            else:
-                # Fallback: assume status = 2 means approved
-                leave_requests = leave_requests.filter(status=2)
-            
-            for leave in leave_requests:
+            for leave in leave_applications:
                 # For full-day leave, block completely
-                if not hasattr(leave, 'half_day_type') or not leave.half_day_type:
-                    return True, f"You have approved full-day leave on {date}. Check-in is not allowed."
+                if not leave.is_half_day:
+                    return True, f"You are on approved {leave.leave_type.name} leave today. Check-in is not allowed. Contact admin if you need to work."
                 
                 # For half-day leave, check timing using IST
-                if current_time and hasattr(leave, 'half_day_type') and leave.half_day_type:
+                if current_time and leave.is_half_day and leave.half_day_period:
                     ist_time = get_ist_time(current_time)
                     current_hour = ist_time.hour
                     
-                    if leave.half_day_type == 'morning':
-                        # Morning half-day leave (9 AM - 1 PM IST)
-                        if 9 <= current_hour < 13:
-                            return True, f"You have approved morning half-day leave (9 AM - 1 PM IST). Check-in allowed after 1 PM IST."
-                    elif leave.half_day_type == 'afternoon':
-                        # Afternoon half-day leave (1 PM - 6 PM IST)
-                        if 13 <= current_hour < 18:
-                            return True, f"You have approved afternoon half-day leave (1 PM - 6 PM IST). Check-in allowed before 1 PM IST."
+                    if leave.half_day_period == 'morning':
+                        # Morning half-day leave (before 1 PM IST)
+                        if current_hour < 13:
+                            return True, f"You are on approved morning half-day {leave.leave_type.name} leave. Check-in allowed after 1:00 PM IST."
+                    elif leave.half_day_period == 'afternoon':
+                        # Afternoon half-day leave (after 1 PM IST)
+                        if current_hour >= 13:
+                            return True, f"You are on approved afternoon half-day {leave.leave_type.name} leave. Check-in allowed before 1:00 PM IST."
             
             return False, ""
-        except StatusChoice.DoesNotExist:
+        except Exception as e:
+            # If there's any error, allow check-in (fail open)
+            print(f"Error checking leave status: {e}")
             return False, ""
 
     def _check_flexible_timing_status(self, user, date, current_time):
