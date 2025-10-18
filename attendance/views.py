@@ -30,7 +30,7 @@ def format_duration(duration):
     return f"{hours}:{minutes:02d}:{seconds:02d}"
 
 class AttendanceViewSet(viewsets.ModelViewSet):
-    queryset = Attendance.objects.all()
+    queryset = Attendance.objects.all().order_by('-date', '-created_at')
     serializer_class = AttendanceSerializer
     permission_classes = [IsAuthenticated]
 
@@ -49,7 +49,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             qs = qs.filter(date__gte=start_date)
         if end_date:
             qs = qs.filter(date__lte=end_date)
-        return qs
+        return qs.order_by('-date', '-created_at')
 
     def create(self, request, *args, **kwargs):
         # Allow employees to create their own attendance records via check-in/out actions
@@ -940,7 +940,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             })
 
 class LeaveRequestViewSet(viewsets.ModelViewSet):
-    queryset = LeaveRequest.objects.all()
+    queryset = LeaveRequest.objects.all().order_by('-created_at')
     serializer_class = LeaveRequestSerializer
     permission_classes = [IsAuthenticated]
 
@@ -1039,7 +1039,7 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         return Response({'detail': 'Invalid request state.'}, status=status.HTTP_400_BAD_REQUEST)
 
 class TimeAdjustmentViewSet(viewsets.ModelViewSet):
-    queryset = TimeAdjustment.objects.all()
+    queryset = TimeAdjustment.objects.all().order_by('-created_at')
     serializer_class = TimeAdjustmentSerializer
     permission_classes = [IsAuthenticated]
 
@@ -1061,7 +1061,7 @@ class TimeAdjustmentViewSet(viewsets.ModelViewSet):
         status_id = self.request.query_params.get('status')
         if status_id:
             qs = qs.filter(status_id=status_id)
-        return qs
+        return qs.order_by('-created_at')
 
     def create(self, request, *args, **kwargs):
         if not (request.user.is_staff or request.user.is_superuser):
@@ -1079,14 +1079,14 @@ class TimeAdjustmentViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 class ApprovalViewSet(viewsets.ModelViewSet):
-    queryset = Approval.objects.all()
+    queryset = Approval.objects.all().order_by('-created_at')
     serializer_class = ApprovalSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
         if user.is_staff or user.is_superuser:
-            return Approval.objects.all()
+            return Approval.objects.all().order_by('-created_at')
         # Non-staff can only view approvals where they are the approver
-        return Approval.objects.filter(approver=user)
+        return Approval.objects.filter(approver=user).order_by('-created_at')
 

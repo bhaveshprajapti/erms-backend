@@ -34,7 +34,7 @@ from .flexible_timing_views import (
 
 class LeaveTypeViewSet(viewsets.ModelViewSet):
     """ViewSet for managing leave types"""
-    queryset = LeaveType.objects.all()
+    queryset = LeaveType.objects.all().order_by('-created_at')
     serializer_class = LeaveTypeSerializer
     permission_classes = [IsAuthenticated]
     
@@ -42,7 +42,7 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         if not self.request.user.is_staff:
             queryset = queryset.filter(is_active=True)
-        return queryset.order_by('name')
+        return queryset.order_by('-created_at')
     
     def perform_update(self, serializer):
         """Handle leave type status changes with proper validation"""
@@ -127,7 +127,7 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
 
 class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
     """ViewSet for managing leave type policies"""
-    queryset = LeaveTypePolicy.objects.all()
+    queryset = LeaveTypePolicy.objects.all().order_by('-created_at')
     serializer_class = LeaveTypePolicySerializer
     permission_classes = [IsAuthenticated]
     
@@ -140,7 +140,7 @@ class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
         if not self.request.user.is_staff:
             queryset = queryset.filter(is_active=True)
         
-        return queryset.order_by('leave_type__name', 'name')
+        return queryset.order_by('-created_at')
     
     def perform_update(self, serializer):
         """Handle leave policy status changes with balance management"""
@@ -297,7 +297,7 @@ class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
 
 class LeaveBalanceViewSet(viewsets.ModelViewSet):
     """ViewSet for managing leave balances"""
-    queryset = LeaveBalance.objects.all()
+    queryset = LeaveBalance.objects.all().order_by('-created_at')
     serializer_class = LeaveBalanceSerializer
     permission_classes = [IsAuthenticated]
     
@@ -324,7 +324,7 @@ class LeaveBalanceViewSet(viewsets.ModelViewSet):
             # Default to current year
             queryset = queryset.filter(year=date.today().year)
         
-        return queryset.order_by('user__username', 'leave_type__name')
+        return queryset.order_by('-year', '-created_at')
     
     @action(detail=False, methods=['get'])
     def my_balances(self, request):
@@ -509,7 +509,7 @@ class LeaveBalanceViewSet(viewsets.ModelViewSet):
 
 class LeaveApplicationViewSet(viewsets.ModelViewSet):
     """ViewSet for managing leave applications"""
-    queryset = LeaveApplication.objects.all()
+    queryset = LeaveApplication.objects.all().order_by('-applied_at')
     permission_classes = [IsAuthenticated]
     
     def get_serializer_class(self):

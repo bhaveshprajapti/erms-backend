@@ -15,7 +15,7 @@ from .serializers import (
 )
 
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.filter(deleted_at__isnull=True)
+    queryset = User.objects.filter(deleted_at__isnull=True).order_by('-created_at')
     permission_classes = [IsAuthenticated]
     
     def get_serializer_class(self):
@@ -90,19 +90,19 @@ class UserViewSet(viewsets.ModelViewSet):
         instance.save()
 
 class OrganizationViewSet(viewsets.ModelViewSet):
-    queryset = Organization.objects.all()
+    queryset = Organization.objects.all().order_by('-created_at')
     serializer_class = OrganizationSerializer
 
 class RoleViewSet(viewsets.ModelViewSet):
-    queryset = Role.objects.all()
+    queryset = Role.objects.all().order_by('-created_at')
     serializer_class = RoleSerializer
 
 class PermissionViewSet(viewsets.ModelViewSet):
-    queryset = Permission.objects.all()
+    queryset = Permission.objects.all().order_by('-created_at')
     serializer_class = PermissionSerializer
 
 class ModuleViewSet(viewsets.ModelViewSet):
-    queryset = Module.objects.all()
+    queryset = Module.objects.all().order_by('-created_at')
     serializer_class = ModuleSerializer
 
 
@@ -119,10 +119,10 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
         
         # If user is admin/staff, show all requests
         if user.is_superuser or user.is_staff:
-            return ProfileUpdateRequest.objects.all()
+            return ProfileUpdateRequest.objects.all().order_by('-requested_at')
         
         # Regular employees can only see their own requests
-        return ProfileUpdateRequest.objects.filter(user=user)
+        return ProfileUpdateRequest.objects.filter(user=user).order_by('-requested_at')
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def approve(self, request, pk=None):
@@ -250,14 +250,14 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
         if not (request.user.is_superuser or request.user.is_staff):
             return Response({'error': 'Permission denied'}, status=403)
         
-        pending_requests = ProfileUpdateRequest.objects.filter(status='pending')
+        pending_requests = ProfileUpdateRequest.objects.filter(status='pending').order_by('-requested_at')
         serializer = self.get_serializer(pending_requests, many=True)
         return Response(serializer.data)
     
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def my_requests(self, request):
         """Get current user's profile update requests"""
-        user_requests = ProfileUpdateRequest.objects.filter(user=request.user)
+        user_requests = ProfileUpdateRequest.objects.filter(user=request.user).order_by('-requested_at')
         serializer = self.get_serializer(user_requests, many=True)
         return Response(serializer.data)
 

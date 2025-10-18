@@ -114,8 +114,14 @@ class QuotationViewSet(viewsets.ModelViewSet):
         quotation = self.get_object()
         
         try:
-            # Generate PDF
-            pdf_buffer = generate_quotation_pdf(quotation)
+            # Try HTML-based PDF generator first (better quality, pixel-perfect)
+            try:
+                from .html_pdf_generator import generate_quotation_html_pdf
+                pdf_buffer = generate_quotation_html_pdf(quotation)
+            except ImportError as ie:
+                # Fallback to ReportLab if WeasyPrint not available
+                print(f"WeasyPrint not available, using ReportLab: {ie}")
+                pdf_buffer = generate_quotation_pdf(quotation)
             
             # Create HTTP response with PDF
             response = HttpResponse(pdf_buffer, content_type='application/pdf')
@@ -123,6 +129,8 @@ class QuotationViewSet(viewsets.ModelViewSet):
             return response
         
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return Response(
                 {'error': f'Failed to generate PDF: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
