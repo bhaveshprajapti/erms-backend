@@ -53,17 +53,38 @@ class Quotation(models.Model):
     notes = models.TextField(null=True, blank=True)
     terms_conditions = models.TextField(null=True, blank=True)
     
+    # Additional fields from modal
+    prepared_by = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='prepared_quotations')
+    lead_source = models.CharField(max_length=255, null=True, blank=True)
+    
     # Dates
     date = models.DateField(auto_now_add=True)
     valid_until = models.DateField()
     
+    # Service items and hosting details
+    service_items = models.JSONField(default=list)  # Store service items as JSON
+    domain_registration = models.JSONField(default=dict)  # Store hosting details as JSON
+    server_hosting = models.JSONField(default=dict)
+    ssl_certificate = models.JSONField(default=dict)
+    email_hosting = models.JSONField(default=dict)
+    
     # Financial details
-    line_items = models.JSONField(default=list)  # Store line items as JSON
+    line_items = models.JSONField(default=list)  # Store line items as JSON (legacy)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=10.0)
     tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    discount_type = models.CharField(max_length=10, choices=[('none', 'None'), ('flat', 'Flat'), ('percent', 'Percent')], default='none')
+    discount_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)  # Calculated discount amount
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)  # Final total
+    
+    # Additional info
+    payment_terms = models.TextField(null=True, blank=True)
+    additional_notes = models.TextField(null=True, blank=True)
+    signatory_name = models.CharField(max_length=255, null=True, blank=True)
+    signatory_designation = models.CharField(max_length=255, null=True, blank=True)
+    signature = models.ImageField(upload_to='quotation_signatures/', null=True, blank=True)
     
     # Status and tracking
     status = models.ForeignKey(StatusChoice, on_delete=models.SET_NULL, null=True, blank=True, limit_choices_to={'category': 'quotation_status'})
@@ -74,44 +95,48 @@ class Quotation(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def generate_quotation_no(self):
-        """Generate auto-incremented quotation number starting with QT0001"""
+        """Generate quotation number in format: QT-DW-DDMMYYYY-XXXXXX"""
         if self.quotation_no:
             return self.quotation_no
         
-        # Get the highest existing quotation_no number
-        import re
-        from django.db.models import Max
-        
-        latest_quotation = Quotation.objects.filter(
-            quotation_no__regex=r'^QT\d{4}$'
-        ).aggregate(Max('quotation_no'))['quotation_no__max']
-        
-        if latest_quotation:
-            # Extract number and increment
-            number = int(latest_quotation[2:]) + 1
-        else:
-            # Start with 1 if no existing quotations
-            number = 1
-        
-        return f"QT{number:04d}"
+        from .utils import ensure_unique_quotation_number
+        return ensure_unique_quotation_number()
     
     def calculate_totals(self):
-        """Calculate subtotal, tax, and total based on line items"""
-        if not self.line_items:
-            self.subtotal = 0
-            self.tax_amount = 0
-            self.total_amount = 0
-            return
+        """Calculate subtotal, tax, and total based on service items and hosting"""
+        subtotal = 0
         
-        # Calculate subtotal from line items
-        subtotal = sum(
-            item.get('quantity', 0) * item.get('rate', 0) 
-            for item in self.line_items
-        )
+        # Calculate service items total
+        if self.service_items:
+            subtotal += sum(
+                item.get('quantity', 0) * item.get('unit_price', 0) 
+                for item in self.service_items
+            )
         
+        # Add hosting items if included
+        hosting_items = [self.domain_registration, self.server_hosting, self.ssl_certificate, self.email_hosting]
+        for hosting_item in hosting_items:
+            if hosting_item and hosting_item.get('included', False):
+                subtotal += hosting_item.get('unit_price', 0)
+        
+        # Apply discount
+        discount_amount = 0
+        if self.discount_type == 'flat':
+            discount_amount = self.discount_value
+        elif self.discount_type == 'percent':
+            discount_amount = (subtotal * self.discount_value) / 100
+        
+        # Calculate tax on discounted amount
+        after_discount = subtotal - discount_amount
+        tax_amount = (after_discount * self.tax_rate) / 100
+        grand_total = after_discount + tax_amount
+        
+        # Update fields
         self.subtotal = subtotal
-        self.tax_amount = subtotal * (self.tax_rate / 100)
-        self.total_amount = subtotal + self.tax_amount - self.discount
+        self.discount = discount_amount
+        self.tax_amount = tax_amount
+        self.total_amount = grand_total
+        self.grand_total = grand_total
     
     def save(self, *args, **kwargs):
         if not self.quotation_no:

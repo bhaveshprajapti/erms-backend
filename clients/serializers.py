@@ -187,6 +187,8 @@ class QuotationSerializer(serializers.ModelSerializer):
     subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     tax_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     total_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    grand_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    discount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     
     class Meta:
         model = Quotation
@@ -194,8 +196,12 @@ class QuotationSerializer(serializers.ModelSerializer):
             'id', 'quotation_no', 'client', 'client_info',
             'client_name', 'client_email', 'client_phone', 'client_address',
             'title', 'description', 'notes', 'terms_conditions',
+            'prepared_by', 'lead_source',
             'date', 'valid_until',
-            'line_items', 'subtotal', 'tax_rate', 'tax_amount', 'discount', 'total_amount',
+            'service_items', 'domain_registration', 'server_hosting', 'ssl_certificate', 'email_hosting',
+            'line_items', 'subtotal', 'tax_rate', 'tax_amount', 
+            'discount_type', 'discount_value', 'discount', 'total_amount', 'grand_total',
+            'payment_terms', 'additional_notes', 'signatory_name', 'signatory_designation', 'signature',
             'status', 'is_converted', 'converted_project',
             'created_at', 'updated_at'
         ]
@@ -208,6 +214,20 @@ class QuotationSerializer(serializers.ModelSerializer):
     def get_client_info(self, obj):
         """Get client information from linked client or stored fields"""
         return obj.get_client_info()
+    
+    def create(self, validated_data):
+        """Create quotation and calculate totals"""
+        quotation = super().create(validated_data)
+        quotation.calculate_totals()
+        quotation.save()
+        return quotation
+    
+    def update(self, instance, validated_data):
+        """Update quotation and recalculate totals"""
+        quotation = super().update(instance, validated_data)
+        quotation.calculate_totals()
+        quotation.save()
+        return quotation
     
     def validate(self, data):
         """Validate that either client is linked or client info is provided"""
@@ -229,8 +249,8 @@ class QuotationListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Quotation
         fields = [
-            'id', 'quotation_no', 'client_info', 'title', 
-            'total_amount', 'status', 'is_converted', 'valid_until', 'created_at'
+            'id', 'quotation_no', 'client_info', 'title', 'date',
+            'total_amount', 'status', 'is_converted', 'valid_until', 'created_at', 'updated_at'
         ]
     
     def get_client_info(self, obj):

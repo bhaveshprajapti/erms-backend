@@ -2,11 +2,13 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Q
+from django.http import HttpResponse
 from .models import Client, ClientRole, Quotation
 from .serializers import (
     ClientSerializer, ClientListSerializer, ClientRoleSerializer, 
     QuotationSerializer, QuotationListSerializer
 )
+from .pdf_generator import generate_quotation_pdf
 
 
 class ClientViewSet(viewsets.ModelViewSet):
@@ -106,6 +108,26 @@ class QuotationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
     
+    @action(detail=True, methods=['get'])
+    def download_pdf(self, request, pk=None):
+        """Generate and download quotation as PDF"""
+        quotation = self.get_object()
+        
+        try:
+            # Generate PDF
+            pdf_buffer = generate_quotation_pdf(quotation)
+            
+            # Create HTTP response with PDF
+            response = HttpResponse(pdf_buffer, content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="Quotation_{quotation.quotation_no}.pdf"'
+            return response
+        
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate PDF: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     @action(detail=True, methods=['post'])
     def unlink_client(self, request, pk=None):
         """Unlink client from quotation (make it standalone)"""
@@ -122,6 +144,17 @@ class QuotationViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(quotation)
         return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='next-number')
+    def next_number(self, request):
+        """Generate next quotation number in format: QT-DW-DDMMYYYY-XXXXXX"""
+        from .utils import ensure_unique_quotation_number
+        
+        quotation_no = ensure_unique_quotation_number()
+        
+        return Response({
+            'quotation_no': quotation_no
+        })
     
     @action(detail=True, methods=['post'])
     def convert_to_project(self, request, pk=None):
