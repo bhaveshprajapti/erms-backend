@@ -370,11 +370,11 @@ class LeaveApplication(models.Model):
             else:
                 days = (self.end_date - self.start_date).days + 1
                 if self.policy and not self.policy.include_weekends:
-                    # Calculate working days only
+                    # Calculate working days only (exclude Sunday only, Saturday is working day)
                     working_days = 0
                     current_date = self.start_date
                     while current_date <= self.end_date:
-                        if current_date.weekday() < 5:  # Monday = 0, Sunday = 6
+                        if current_date.weekday() != 6:  # Monday = 0, Sunday = 6 (exclude only Sunday)
                             working_days += 1
                         current_date += timedelta(days=1)
                     days = working_days

@@ -29,14 +29,14 @@ class Command(BaseCommand):
             else:
                 days = (app.end_date - app.start_date).days + 1
                 if app.policy and not app.policy.include_weekends:
-                    self.stdout.write(f"  Policy excludes weekends, calculating working days...")
+                    self.stdout.write(f"  Policy excludes weekends, calculating working days (Saturday is working day)...")
                     from datetime import timedelta
                     working_days = 0
                     current_date = app.start_date
                     while current_date <= app.end_date:
                         weekday = current_date.weekday()
-                        self.stdout.write(f"    {current_date} is weekday {weekday} ({'working' if weekday < 5 else 'weekend'})")
-                        if weekday < 5:
+                        self.stdout.write(f"    {current_date} is weekday {weekday} ({'working' if weekday != 6 else 'Sunday (off)'})")
+                        if weekday != 6:  # Exclude only Sunday (6), Saturday (5) is working day
                             working_days += 1
                         current_date += timedelta(days=1)
                     days = working_days

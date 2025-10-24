@@ -282,7 +282,7 @@ def get_working_days_between_ist_dates(start_date, end_date, exclude_weekends=Tr
     
     while current_date <= end_date:
         # Monday is 0, Sunday is 6
-        if current_date.weekday() < 5:  # Monday to Friday
+        if current_date.weekday() != 6:  # Monday to Saturday (exclude only Sunday)
             working_days += 1
         current_date += timedelta(days=1)
     
