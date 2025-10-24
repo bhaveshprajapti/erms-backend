@@ -630,6 +630,21 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             'total_break_time': format_duration(getattr(attendance, 'total_break_time', timedelta(0)))
         })
 
+    @action(detail=False, methods=['post'])
+    def update_session_activity(self, request):
+        """Update the last_activity timestamp for the current user's session."""
+        user = request.user
+        try:
+            active_session = SessionLog.get_active_session(user)
+            if active_session:
+                active_session.update_activity()
+                return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+            else:
+                return Response({'detail': 'No active session found.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"Session management not available in update_session_activity: {e}")
+            return Response({'detail': 'Session management is not available.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def _calculate_day_status(self, total_hours):
         """Calculate day status based on working hours"""
         if not total_hours:

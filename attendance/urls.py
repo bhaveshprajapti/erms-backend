@@ -6,7 +6,7 @@ from .views import (
 )
 
 router = DefaultRouter()
-router.register(r'attendances', AttendanceViewSet)
+router.register(r'attendances', AttendanceViewSet, basename='attendance')
 router.register(r'leave-requests', LeaveRequestViewSet)
 router.register(r'time-adjustments', TimeAdjustmentViewSet)
 router.register(r'approvals', ApprovalViewSet)
