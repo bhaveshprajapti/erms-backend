@@ -158,8 +158,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             else:
                 # For regular shifts
                 if check_in_grace:
-                    # Allow check-in 2 hours before shift start (e.g., 8 AM for 10 AM shift)
-                    early_start = (datetime.combine(datetime.today(), start_time) - timedelta(hours=2)).time()
+                    # Allow check-in 3 hours before shift start (e.g., 7 AM for 10 AM shift)
+                    early_start = (datetime.combine(datetime.today(), start_time) - timedelta(hours=3)).time()
                     # Allow check-in up to 5 minutes after shift start (e.g., 10:05 AM for 10 AM shift)
                     grace_end = (datetime.combine(datetime.today(), start_time) + timedelta(minutes=5)).time()
                     
@@ -301,19 +301,31 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         sessions = attendance.sessions or []
         is_first_checkin = len(sessions) == 0
         
+        # Check if admin has reset the day TODAY and this is the first check-in after reset
+        admin_reset_override = False
+        if (is_first_checkin and 
+            hasattr(attendance, 'admin_reset_at') and 
+            attendance.admin_reset_at is not None):
+            # Check if the reset was done today (same IST date)
+            reset_date = get_ist_date(attendance.admin_reset_at)
+            if reset_date == today:
+                admin_reset_override = True
+        
         # Apply different validation based on check-in type
         if is_first_checkin:
-            # First check-in of the day - apply strict shift validation
-            shift_result = self._is_within_shift_hours(now, shifts, check_in_grace=True)
-            within_shift = shift_result if isinstance(shift_result, bool) else shift_result[0]
-            is_half_day_checkin = isinstance(shift_result, tuple) and len(shift_result) > 1 and shift_result[1] == "half_day"
-            
-            has_flexible_timing, flexible_message = self._check_flexible_timing_status(user, today, now)
-            
-            if not within_shift and not has_flexible_timing:
-                return Response({
-                    'detail': 'Check-in allowed 2 hours before shift start, up to 5 minutes after shift start, or minimum 4 hours before shift end.'
-                }, status=status.HTTP_400_BAD_REQUEST)
+            # First check-in of the day - apply strict shift validation unless admin reset
+            if not admin_reset_override:
+                shift_result = self._is_within_shift_hours(now, shifts, check_in_grace=True)
+                within_shift = shift_result if isinstance(shift_result, bool) else shift_result[0]
+                is_half_day_checkin = isinstance(shift_result, tuple) and len(shift_result) > 1 and shift_result[1] == "half_day"
+                
+                has_flexible_timing, flexible_message = self._check_flexible_timing_status(user, today, now)
+                
+                if not within_shift and not has_flexible_timing:
+                    return Response({
+                        'detail': 'Check-in allowed 3 hours before shift start, up to 5 minutes after shift start, or minimum 4 hours before shift end.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            # If admin reset override is active, skip shift validation for first check-in
         else:
             # Subsequent check-in (after break) - more lenient validation
             # Just check if within reasonable hours (e.g., not in the middle of the night)
@@ -346,6 +358,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         sessions.append(new_session)
         
         attendance.sessions = sessions
+        
+        # Clear admin reset flag after first successful check-in
+        if admin_reset_override:
+            attendance.admin_reset_at = None
+        
         attendance.save()
         
         # Log the check-in event (with backward compatibility)
@@ -643,6 +660,111 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         
         return 'Half Day'
 
+    @action(detail=False, methods=['get'])
+    def check_admin_intervention_needed(self, request):
+        """Check if admin intervention (reset day) is needed for an employee"""
+        user_id = request.query_params.get('user_id')
+        date_str = request.query_params.get('date')
+        
+        if not user_id or not date_str:
+            return Response({
+                'detail': 'user_id and date are required.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from accounts.models import User
+            
+            user = User.objects.get(id=user_id)
+            date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            now = timezone.now()
+            today = get_ist_date(now)
+            
+            # Only check for today or past dates
+            if date > today:
+                return Response({
+                    'needs_intervention': False,
+                    'reason': 'Future date'
+                })
+            
+            # Get attendance record
+            try:
+                attendance = Attendance.objects.get(user=user, date=date)
+                
+                # If day has ended, admin can reset
+                if hasattr(attendance, 'day_ended') and attendance.day_ended:
+                    return Response({
+                        'needs_intervention': True,
+                        'reason': 'Day has ended',
+                        'can_reset': True
+                    })
+                
+                # Check if user has any sessions (checked in)
+                sessions = attendance.sessions or []
+                if len(sessions) > 0:
+                    return Response({
+                        'needs_intervention': False,
+                        'reason': 'User has already checked in'
+                    })
+                
+            except Attendance.DoesNotExist:
+                # No attendance record means user never checked in
+                pass
+            
+            # Check if user is on leave
+            is_on_leave, leave_message = self._check_leave_status(user, date, now)
+            if is_on_leave:
+                return Response({
+                    'needs_intervention': False,
+                    'reason': f'User is on leave: {leave_message}'
+                })
+            
+            # Get user shifts
+            shifts = self._get_user_shifts(user)
+            if not shifts.exists():
+                return Response({
+                    'needs_intervention': False,
+                    'reason': 'No shift assigned'
+                })
+            
+            # For today, check if user missed the check-in window
+            if date == today:
+                # Check if current time is past the allowed check-in window
+                shift_result = self._is_within_shift_hours(now, shifts, check_in_grace=True)
+                within_shift = shift_result if isinstance(shift_result, bool) else shift_result[0]
+                
+                # Check flexible timing
+                has_flexible_timing, flexible_message = self._check_flexible_timing_status(user, date, now)
+                
+                if not within_shift and not has_flexible_timing:
+                    # User is outside allowed check-in window - needs admin intervention
+                    return Response({
+                        'needs_intervention': True,
+                        'reason': 'User missed check-in window (outside 3 hours before to 5 minutes after shift start)',
+                        'can_reset': True
+                    })
+            
+            # For past dates, if no attendance record exists, user missed the day
+            elif date < today:
+                return Response({
+                    'needs_intervention': True,
+                    'reason': 'User missed attendance for this past date',
+                    'can_reset': True
+                })
+            
+            return Response({
+                'needs_intervention': False,
+                'reason': 'User can still check in normally'
+            })
+            
+        except User.DoesNotExist:
+            return Response({
+                'detail': 'User not found.'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except ValueError:
+            return Response({
+                'detail': 'Invalid date format. Use YYYY-MM-DD.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
     @action(detail=False, methods=['post'])
     def admin_reset_day(self, request):
         """Admin action to reset day status and allow employee to check in again"""
@@ -663,11 +785,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             date = datetime.strptime(date_str, '%Y-%m-%d').date()
             attendance = Attendance.objects.get(user_id=user_id, date=date)
             
+            # No restrictions on admin resets - allow unlimited resets when needed
+            # Keep tracking for audit purposes only
+            
             # Reset day status but preserve total_break_time (like total_hours)
             attendance.day_ended = False
             attendance.day_end_time = None
             attendance.day_status = None
             attendance.break_start_time = None
+            attendance.admin_reset_at = timezone.now()  # Track when admin reset the day
+            attendance.admin_reset_count = (attendance.admin_reset_count or 0) + 1  # Increment reset count
             # DO NOT reset total_break_time - preserve it like total_hours
             
             # Fix sessions state - ensure all sessions are properly closed
@@ -690,10 +817,24 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             
             attendance.save()
             
+            # Log the admin reset action for audit trail
+            try:
+                SessionLog.log_event(
+                    user=attendance.user,
+                    event_type='admin_reset',
+                    date=date,
+                    notes=f'Day reset by admin {request.user.username}. Reset count: {attendance.admin_reset_count}.',
+                    request=request
+                )
+            except Exception as e:
+                print(f"Failed to log admin reset event: {e}")
+            
             return Response({
                 'message': 'Day status reset successfully. Employee can check in again.',
                 'date': date_str,
-                'user_id': user_id
+                'user_id': user_id,
+                'reset_count': attendance.admin_reset_count,
+                'info': f'This day has been reset {attendance.admin_reset_count} time(s).' if attendance.admin_reset_count > 1 else 'First reset for this day.'
             })
             
         except Attendance.DoesNotExist:
@@ -938,6 +1079,55 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'attendance_status': attendance_status,
                 'session_valid': session_valid,  # Frontend can use this for session management
             })
+
+    @action(detail=False, methods=['get'])
+    def employee_stats(self, request):
+        """Get employee statistics for admin dashboard"""
+        # Only allow staff/admin to access this endpoint
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        from django.contrib.auth import get_user_model
+        from leave.models import LeaveApplication
+        
+        User = get_user_model()
+        today = get_current_ist_date()
+        
+        # Get all active employees (excluding staff/admin)
+        active_employees = User.objects.filter(is_active=True, is_staff=False)
+        total_employees = active_employees.count()
+        
+        # Get employees who checked in today
+        checked_in_today = Attendance.objects.filter(
+            date=today,
+            sessions__isnull=False
+        ).exclude(sessions=[]).values_list('user_id', flat=True)
+        
+        # Filter to only include sessions with check_in_time
+        checked_in_employees = 0
+        for attendance in Attendance.objects.filter(date=today, sessions__isnull=False).exclude(sessions=[]):
+            if attendance.sessions and any(session.get('check_in') for session in attendance.sessions):
+                checked_in_employees += 1
+        
+        # Get employees on approved leave today
+        on_leave_today = LeaveApplication.objects.filter(
+            start_date__lte=today,
+            end_date__gte=today,
+            status='approved'
+        ).values_list('user_id', flat=True).distinct()
+        
+        on_leave_employees = len(set(on_leave_today))
+        
+        # Calculate absent employees (Total - Checked In - On Leave)
+        absent_employees = max(0, total_employees - checked_in_employees - on_leave_employees)
+        
+        return Response({
+            'total_employees': total_employees,
+            'checked_in_employees': checked_in_employees,
+            'absent_employees': absent_employees,
+            'on_leave_employees': on_leave_employees,
+            'date': today
+        })
 
 class LeaveRequestViewSet(viewsets.ModelViewSet):
     queryset = LeaveRequest.objects.all().order_by('-created_at')

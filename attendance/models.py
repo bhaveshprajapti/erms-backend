@@ -18,6 +18,8 @@ class Attendance(models.Model):
     day_status = models.CharField(max_length=20, null=True, blank=True)
     location = models.JSONField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
+    admin_reset_at = models.DateTimeField(null=True, blank=True)  # Track when admin reset the day
+    admin_reset_count = models.PositiveIntegerField(default=0)  # Track number of resets per day
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
