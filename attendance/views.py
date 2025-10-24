@@ -1144,6 +1144,52 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             'date': today
         })
 
+    @action(detail=False, methods=['get'])
+    def get_shift_timing(self, request):
+        """
+        Get the shift timing for the currently authenticated user.
+        """
+        user = request.user
+        shifts = self._get_user_shifts(user)
+
+        if not shifts.exists():
+            return Response({
+                'detail': 'No shift assigned. Contact admin.'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Assuming a user has one primary active shift for simplicity
+        shift = shifts.first()
+
+        return Response({
+            'start_time': shift.start_time.strftime('%H:%M'),
+            'end_time': shift.end_time.strftime('%H:%M'),
+            'shift_name': shift.name
+        })
+
+
+    @action(detail=False, methods=['get'])
+    def get_shift_timing(self, request):
+        """
+        Get the shift timing for the currently authenticated user.
+        """
+        user = request.user
+        shifts = self._get_user_shifts(user)
+
+        if not shifts.exists():
+            return Response({
+                'detail': 'No shift assigned. Contact admin.'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Assuming a user has one primary active shift for simplicity
+        shift = shifts.first()
+
+        return Response({
+            'start_time': shift.start_time.strftime('%H:%M'),
+            'end_time': shift.end_time.strftime('%H:%M'),
+            'shift_name': shift.name
+        })
+
+
 class LeaveRequestViewSet(viewsets.ModelViewSet):
     queryset = LeaveRequest.objects.all().order_by('-created_at')
     serializer_class = LeaveRequestSerializer
