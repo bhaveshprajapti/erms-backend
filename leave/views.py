@@ -551,6 +551,37 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
         return queryset.select_related('user', 'leave_type', 'policy', 'approved_by').order_by('-applied_at')
     
     def perform_create(self, serializer):
+        # Validate dates before saving
+        start_date = serializer.validated_data.get('start_date')
+        end_date = serializer.validated_data.get('end_date')
+        
+        # Import timezone utilities for proper date validation
+        from common.timezone_utils import get_current_ist_date
+        from rest_framework.exceptions import ValidationError
+        
+        current_date = get_current_ist_date()
+        
+        # Check if start date is in the past
+        if start_date < current_date:
+            raise ValidationError({
+                'start_date': 'Leave start date cannot be in the past. Please select a future date.'
+            })
+        
+        # Check if end date is before start date
+        if end_date < start_date:
+            raise ValidationError({
+                'end_date': 'Leave end date cannot be before the start date.'
+            })
+        
+        # Check if dates are too far in the future (business rule)
+        from datetime import timedelta
+        max_future_date = current_date + timedelta(days=365)  # 1 year ahead
+        
+        if start_date > max_future_date:
+            raise ValidationError({
+                'start_date': 'Leave start date cannot be more than 1 year in the future.'
+            })
+        
         serializer.save(user=self.request.user)
     
     @action(detail=True, methods=['post'])
@@ -563,9 +594,14 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
             )
         
         application = self.get_object()
-        if application.status != 'pending':
+        
+        # Check if application dates are in the past
+        from common.timezone_utils import get_current_ist_date
+        current_date = get_current_ist_date()
+        
+        if application.start_date < current_date:
             return Response(
-                {'error': 'Only pending applications can be approved'},
+                {'error': 'Cannot approve leave application as the start date has already passed'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -573,18 +609,53 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
         if serializer.is_valid():
             data = serializer.validated_data
             
-            if data['action'] == 'approve':
-                application.approve(request.user, data.get('comments'))
-                return Response({'message': 'Application approved successfully'})
-            else:
-                application.reject(
-                    request.user, 
-                    data['rejection_reason'],
-                    data.get('comments')
+            try:
+                if data['action'] == 'approve':
+                    application.approve(request.user, data.get('comments'))
+                    return Response({'message': 'Application approved successfully'})
+                else:
+                    application.reject(
+                        request.user, 
+                        data['rejection_reason'],
+                        data.get('comments')
+                    )
+                    return Response({'message': 'Application rejected successfully'})
+            except Exception as e:
+                return Response(
+                    {'error': f'Failed to process application: {str(e)}'},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
-                return Response({'message': 'Application rejected successfully'})
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """Reject a leave application"""
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        application = self.get_object()
+        
+        rejection_reason = request.data.get('rejection_reason', '')
+        comments = request.data.get('comments', '')
+        
+        if not rejection_reason:
+            return Response(
+                {'error': 'Rejection reason is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            application.reject(request.user, rejection_reason, comments)
+            return Response({'message': 'Application rejected successfully'})
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to reject application: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
     
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
@@ -599,13 +670,25 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
             )
         
         if not application.can_be_cancelled():
-            return Response(
-                {'error': 'Application cannot be cancelled'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            # Provide more specific error messages
+            if application.start_date < date.today():
+                return Response(
+                    {'error': 'Cannot cancel leave request as the start date has already passed'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            elif application.status not in ['draft', 'pending', 'approved']:
+                return Response(
+                    {'error': f'Cannot cancel leave request with status: {application.status}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            else:
+                return Response(
+                    {'error': 'Application cannot be cancelled'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
-        application.status = 'cancelled'
-        application.save()
+        # Use the new cancel method that handles balance restoration
+        application.cancel(cancelled_by=request.user)
         
         return Response({'message': 'Application cancelled successfully'})
     

@@ -386,7 +386,8 @@ class LeaveApplication(models.Model):
     
     def can_be_cancelled(self):
         """Check if application can be cancelled by user"""
-        return self.status in ['draft', 'pending'] and self.start_date >= date.today()
+        # Allow cancelling draft, pending, and approved leaves if start date is today or in future
+        return self.status in ['draft', 'pending', 'approved'] and self.start_date >= date.today()
     
     def can_be_edited(self):
         """Check if application can be edited by user"""
@@ -452,6 +453,26 @@ class LeaveApplication(models.Model):
         self.rejection_reason = reason
         if comments:
             self.admin_comments = comments
+        self.save()
+    
+    def cancel(self, cancelled_by=None):
+        """Cancel the leave application and restore balance if it was approved"""
+        # If this was previously approved, restore the balance
+        if self.status == 'approved':
+            try:
+                balance = LeaveBalance.objects.get(
+                    user=self.user,
+                    leave_type=self.leave_type,
+                    year=self.start_date.year
+                )
+                balance.used_balance = max(Decimal('0'), balance.used_balance - self.total_days)
+                balance.save()
+            except LeaveBalance.DoesNotExist:
+                pass
+        
+        self.status = 'cancelled'
+        if cancelled_by:
+            self.approved_by = cancelled_by
         self.save()
 
 
