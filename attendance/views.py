@@ -798,7 +798,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         
         try:
             date = datetime.strptime(date_str, '%Y-%m-%d').date()
-            attendance = Attendance.objects.get(user_id=user_id, date=date)
+            attendance, created = Attendance.objects.get_or_create(
+                user_id=user_id, 
+                date=date,
+                defaults={'sessions': []}  # Default value for sessions
+            )
             
             # No restrictions on admin resets - allow unlimited resets when needed
             # Keep tracking for audit purposes only
