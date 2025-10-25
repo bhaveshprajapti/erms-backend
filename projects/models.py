@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 from accounts.models import User
 from common.models import ProjectType, StatusChoice, Technology, Priority, Tag, AppService
 
@@ -26,6 +27,9 @@ class Project(models.Model):
         ('No', 'No'),
     ]
 
+    # Auto-generated Project ID
+    project_id = models.CharField(max_length=10, unique=True, blank=True)
+    
     # Quotation Details
     quotation = models.ForeignKey('clients.Quotation', on_delete=models.SET_NULL, null=True, blank=True)
     client = models.ForeignKey('clients.Client', on_delete=models.SET_NULL, null=True, blank=True)
@@ -72,6 +76,9 @@ class Project(models.Model):
     free_service = models.TextField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
     
+    # Project Folder
+    project_folder = models.ForeignKey('files.Folder', on_delete=models.SET_NULL, null=True, blank=True, related_name='project_ref')
+    
     # System fields
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -80,8 +87,32 @@ class Project(models.Model):
         indexes = [models.Index(fields=['status', 'start_date'])]
         ordering = ['-created_at']
 
+    def save(self, *args, **kwargs):
+        if not self.project_id:
+            self.project_id = self.generate_project_id()
+        super().save(*args, **kwargs)
+    
+    def generate_project_id(self):
+        """Generate auto project ID with format P0001, P0002, etc."""
+        # Get the highest existing project number
+        last_project = Project.objects.filter(
+            project_id__startswith='P'
+        ).exclude(id=self.id).order_by('-id').first()
+        
+        if last_project and last_project.project_id:
+            try:
+                # Extract number from project_id (e.g., P0001 -> 1)
+                last_number = int(last_project.project_id[1:])
+                next_number = last_number + 1
+            except (ValueError, IndexError):
+                next_number = 1
+        else:
+            next_number = 1
+        
+        return f"P{next_number:04d}"
+    
     def __str__(self):
-        return self.project_name
+        return f"{self.project_id} - {self.project_name}" if self.project_id else self.project_name
     
     @property
     def total_expenses(self):

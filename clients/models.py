@@ -14,6 +14,7 @@ class Client(models.Model):
     gst_number = models.CharField(max_length=15, null=True, blank=True)
     website = models.URLField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    client_folder = models.ForeignKey('files.Folder', on_delete=models.SET_NULL, null=True, blank=True, related_name='client_ref')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

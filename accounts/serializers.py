@@ -41,7 +41,7 @@ class UserListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'employee_id', 'username', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'is_active', 
-            'is_staff', 'is_superuser', 'designations', 'technologies', 'shifts'
+            'is_staff', 'is_superuser', 'designations', 'technologies', 'shifts', 'profile_picture'
         )
 
 class UserDetailSerializer(serializers.ModelSerializer):
@@ -182,6 +182,32 @@ class UserDetailSerializer(serializers.ModelSerializer):
                     os.makedirs(subfolder_path, exist_ok=True)
                 
                 instance.folder_path = folder_path
+                
+                # Create database record for the folder
+                from files.models import Folder
+                main_folder = Folder.objects.create(
+                    name=f"Employee_{instance.first_name}_{instance.last_name}",
+                    employee=instance,
+                    created_by=instance,  # or get from request context if available
+                    is_employee_folder=True,
+                    is_system_folder=True,
+                    color='yellow',
+                    description=f"Employee folder for {instance.first_name} {instance.last_name}"
+                )
+                
+                # Create database records for subfolders
+                for subfolder_name in subfolders:
+                    Folder.objects.create(
+                        name=subfolder_name.title(),
+                        parent=main_folder,
+                        employee=instance,
+                        created_by=instance,
+                        is_employee_folder=True,
+                        is_system_folder=True,
+                        color='blue',
+                        description=f"{subfolder_name.title()} folder for {instance.first_name} {instance.last_name}"
+                    )
+                
                 print(f"Successfully created folder structure for employee {instance.username} at {folder_path}")
             except Exception as e:
                 # Log the error but don't fail the user creation
@@ -272,6 +298,32 @@ class UserDetailSerializer(serializers.ModelSerializer):
                     os.makedirs(subfolder_path, exist_ok=True)
                 
                 instance.folder_path = folder_path
+                
+                # Create database record for the folder
+                from files.models import Folder
+                main_folder = Folder.objects.create(
+                    name=f"Employee_{instance.first_name}_{instance.last_name}",
+                    employee=instance,
+                    created_by=instance,
+                    is_employee_folder=True,
+                    is_system_folder=True,
+                    color='yellow',
+                    description=f"Employee folder for {instance.first_name} {instance.last_name}"
+                )
+                
+                # Create database records for subfolders
+                for subfolder_name in subfolders:
+                    Folder.objects.create(
+                        name=subfolder_name.title(),
+                        parent=main_folder,
+                        employee=instance,
+                        created_by=instance,
+                        is_employee_folder=True,
+                        is_system_folder=True,
+                        color='blue',
+                        description=f"{subfolder_name.title()} folder for {instance.first_name} {instance.last_name}"
+                    )
+                
                 print(f"Successfully created folder structure for employee {instance.username} at {folder_path}")
             except Exception as e:
                 print(f"Failed to create folder for employee {instance.username}: {e}")

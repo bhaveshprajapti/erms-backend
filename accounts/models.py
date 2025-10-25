@@ -79,6 +79,7 @@ class User(AbstractUser):
     employee_details = models.JSONField(null=True, blank=True)
     profile_picture = models.ImageField(upload_to='profile_pictures/', null=True, blank=True)
     folder_path = models.CharField(max_length=500, null=True, blank=True)
+    employee_folder = models.ForeignKey('files.Folder', on_delete=models.SET_NULL, null=True, blank=True, related_name='employee_ref')
     is_on_probation = models.BooleanField(default=False)
     probation_months = models.PositiveIntegerField(null=True, blank=True, help_text="Number of months for probation period")
     is_on_notice_period = models.BooleanField(default=False)
