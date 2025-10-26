@@ -105,9 +105,9 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='erms_db'),
-        'USER': config('DB_USER', default='erms_user'),
-        'PASSWORD': config('DB_PASSWORD', default='erms_password123'),
+        'NAME': config('DB_NAME', default='ermsdb'),
+        'USER': config('DB_USER', default='ermsuser'),
+        'PASSWORD': config('DB_PASSWORD', default='Erms@12345'),
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
     }
