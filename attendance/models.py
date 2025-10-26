@@ -102,7 +102,6 @@ class SessionLog(models.Model):
         ('start_break', 'Start Break'),
         ('end_break', 'End Break'),
         ('end_of_day', 'End of Day'),
-        ('auto_end_day', 'Auto End Day (Session Timeout)'),
         ('admin_reset', 'Admin Reset Day'),
     ]
     
@@ -207,9 +206,7 @@ class SessionLog(models.Model):
     
     @classmethod
     def check_and_handle_expired_sessions(cls):
-        """Check for expired sessions and auto-end workdays"""
-        from .models import Attendance
-        
+        """Check for expired sessions and mark them as inactive"""
         # Find all active sessions that have expired
         timeout_duration = timezone.timedelta(hours=1, minutes=15)
         cutoff_time = timezone.now() - timeout_duration
@@ -220,56 +217,8 @@ class SessionLog(models.Model):
             last_activity__lt=cutoff_time
         )
         
-        for session in expired_sessions:
-            try:
-                # Check if user has an active attendance record for today
-                # Use IST date for business logic
-                from common.timezone_utils import get_current_ist_date
-                today = get_current_ist_date()
-                attendance = Attendance.objects.filter(
-                    user=session.user,
-                    date=today,
-                    day_ended=False
-                ).first()
-                
-                if attendance:
-                    # Auto-end the workday
-                    sessions = attendance.sessions or []
-                    
-                    # If currently checked in, check out first
-                    if sessions and 'check_out' not in sessions[-1]:
-                        sessions[-1]['check_out'] = session.last_activity.isoformat()
-                        sessions[-1]['location_out'] = {'lat': 0, 'lng': 0, 'auto_checkout': True}
-                    
-                    # End the day
-                    attendance.sessions = sessions
-                    attendance.day_ended = True
-                    attendance.day_end_time = session.last_activity
-                    attendance.break_start_time = None  # Clear any active break
-                    
-                    # Calculate final totals
-                    from .views import AttendanceViewSet
-                    viewset = AttendanceViewSet()
-                    attendance.total_hours = viewset._calculate_total_hours(sessions)
-                    attendance.day_status = viewset._calculate_day_status(attendance.total_hours)
-                    attendance.save()
-                    
-                    # Log the auto-end event
-                    cls.log_event(
-                        user=session.user,
-                        event_type='auto_end_day',
-                        date=today,
-                        notes=f'Auto-ended due to session timeout. Last activity: {session.last_activity}'
-                    )
-                
-                # Mark session as inactive
-                session.is_session_active = False
-                session.save(update_fields=['is_session_active'])
-                
-            except Exception as e:
-                # Log error but continue processing other sessions
-                print(f"Error handling expired session for user {session.user.username}: {e}")
-                continue
+        # Simply mark expired sessions as inactive without affecting attendance
+        expired_count = expired_sessions.update(is_session_active=False)
         
-        return expired_sessions.count()
+        return expired_count
 

@@ -6,7 +6,7 @@ from .models import (
     LeaveType, LeaveTypePolicy, LeaveBalance, LeaveApplication,
     LeaveApplicationComment, LeaveCalendar, OverallLeavePolicy,
     LeaveBlackoutDate, LeaveBalanceAudit, FlexibleTimingType,
-    FlexibleTimingRequest, FlexibleTimingBalance, FlexibleTimingPolicy
+    # FlexibleTimingRequest, FlexibleTimingBalance, FlexibleTimingPolicy
 )
 
 
@@ -226,54 +226,4 @@ class FlexibleTimingTypeAdmin(admin.ModelAdmin):
     list_display = ['name', 'code', 'max_duration_minutes', 'is_active', 'created_at']
     list_filter = ['is_active', 'created_at']
     search_fields = ['name', 'code', 'description']
-    readonly_fields = ['created_at', 'updated_at']
-
-
-@admin.register(FlexibleTimingRequest)
-class FlexibleTimingRequestAdmin(admin.ModelAdmin):
-    list_display = [
-        'user', 'timing_type', 'request_date', 'timing_choice', 'duration_minutes',
-        'status_display', 'approved_by', 'created_at'
-    ]
-    list_filter = [
-        'status', 'timing_type', 'timing_choice', 'request_date', 'created_at'
-    ]
-    search_fields = ['user__username', 'timing_type__name', 'reason']
-    readonly_fields = ['created_at', 'updated_at']
-    
-    def status_display(self, obj):
-        color_map = {
-            'pending': 'orange',
-            'approved': 'green',
-            'rejected': 'red',
-            'cancelled': 'purple'
-        }
-        color = color_map.get(obj.status, 'gray')
-        return format_html(
-            '<span style="color: {}; font-weight: bold;">{}</span>',
-            color, obj.get_status_display()
-        )
-    status_display.short_description = 'Status'
-
-
-@admin.register(FlexibleTimingBalance)
-class FlexibleTimingBalanceAdmin(admin.ModelAdmin):
-    list_display = [
-        'user', 'timing_type', 'year_month', 'monthly_quota', 'used_count',
-        'remaining_balance'
-    ]
-    list_filter = ['timing_type', 'year_month']
-    search_fields = ['user__username', 'timing_type__name']
-    readonly_fields = ['remaining_balance', 'created_at', 'updated_at']
-
-
-@admin.register(FlexibleTimingPolicy)
-class FlexibleTimingPolicyAdmin(admin.ModelAdmin):
-    list_display = [
-        'name', 'max_requests_per_month', 'min_notice_hours', 'requires_approval',
-        'is_active', 'effective_from'
-    ]
-    list_filter = ['requires_approval', 'is_active', 'effective_from']
-    search_fields = ['name']
-    filter_horizontal = ['applicable_roles', 'allowed_timing_types']
     readonly_fields = ['created_at', 'updated_at']

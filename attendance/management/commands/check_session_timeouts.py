@@ -1,5 +1,5 @@
 """
-Django management command to check for expired sessions and auto-end workdays.
+Django management command to check for expired sessions and mark them as inactive.
 This should be run as a cron job every 15 minutes for optimal session management.
 
 Usage:
@@ -15,7 +15,7 @@ from attendance.models import SessionLog
 
 
 class Command(BaseCommand):
-    help = 'Check for expired sessions and auto-end workdays for security and compliance'
+    help = 'Check for expired sessions and mark them as inactive for security and compliance'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -75,7 +75,7 @@ class Command(BaseCommand):
                 if expired_count > 0:
                     self.stdout.write(
                         self.style.SUCCESS(
-                            f'Successfully processed {expired_count} expired sessions'
+                            f'Successfully marked {expired_count} expired sessions as inactive'
                         )
                     )
                 else:

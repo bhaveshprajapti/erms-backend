@@ -1,18 +1,63 @@
+# ERMS Backend Requirements
+# Single requirements file for all environments
+
+# Core Django Framework
 Django==5.2.7
 djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.0
+
+# Configuration & Environment
+python-decouple==3.8
+
+# CORS & Security
 django-cors-headers==4.7.0
 django-filter==25.1
+
+# File & Image Processing
 Pillow==11.3.0
-python-decouple==3.8
 reportlab==4.4.3
 weasyprint==66.0
+
+# HTTP & API
 requests==2.32.5
-celery==5.5.2
-redis==6.4.0
+
+# Date & Time Utilities
 python-dateutil==2.9.0.post0
+
+# Authentication & JWT
 PyJWT==2.10.1
+
+# Build Tools
+setuptools>=65.0.0
+
+# Database Drivers
+# PostgreSQL driver (for production)
 psycopg2-binary==2.9.10
+
+# Production Server & Static Files
 whitenoise==6.9.0
 gunicorn==23.0.0
-djangorestframework-simplejwt==5.3.0
-setuptools>=65.0.0
+
+# Background Tasks (optional)
+celery==5.5.2
+redis==6.4.0
+
+# Monitoring & Logging (optional)
+sentry-sdk==2.18.0
+
+# Performance (optional)
+django-redis==5.4.0
+
+# Development Tools (optional - can be skipped in production)
+django-debug-toolbar==4.4.6
+django-extensions==3.2.3
+
+# Testing (optional - can be skipped in production)
+pytest==8.3.3
+pytest-django==4.9.0
+factory-boy==3.3.1
+
+# Code Quality (optional - can be skipped in production)
+flake8==7.1.1
+black==24.10.0
+isort==5.13.2

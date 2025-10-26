@@ -257,7 +257,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         now = timezone.now()  # Store UTC
         today = get_ist_date(now)  # Use IST date for business logic
         
-        # CRITICAL: Check for expired sessions and auto-end workdays (with backward compatibility)
+        # CRITICAL: Check for expired sessions (with backward compatibility)
         try:
             SessionLog.check_and_handle_expired_sessions()
             
@@ -949,12 +949,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         user = request.user
         today = get_current_ist_date()  # Use IST date for business logic
         
-        # CRITICAL: Check for expired sessions and auto-end workdays BEFORE returning status
+        # CRITICAL: Check for expired sessions BEFORE returning status
         # Handle case where SessionLog table doesn't exist yet (backward compatibility)
         try:
             expired_count = SessionLog.check_and_handle_expired_sessions()
             if expired_count > 0:
-                print(f"Auto-ended {expired_count} expired sessions")
+                print(f"Marked {expired_count} expired sessions as inactive")
         except Exception as e:
             # SessionLog table might not exist yet - continue without session management
             print(f"Session management not available: {e}")
@@ -999,41 +999,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             # CRITICAL FIX: Ensure boolean result
             day_ended = bool(hasattr(attendance, 'day_ended') and attendance.day_ended)
             
-            # If session expired but day not ended, auto-end the day (with backward compatibility)
-            if not session_valid and not day_ended and sessions and active_session:
-                try:
-                    # Auto-end the workday due to session timeout
-                    if sessions and 'check_out' not in sessions[-1]:
-                        # Auto check-out with last known activity time
-                        checkout_time = active_session.last_activity if active_session else timezone.now()
-                        sessions[-1]['check_out'] = checkout_time.isoformat()
-                        sessions[-1]['location_out'] = {'lat': 0, 'lng': 0, 'auto_checkout': True}
-                    
-                    attendance.sessions = sessions
-                    attendance.day_ended = True
-                    attendance.day_end_time = checkout_time if active_session else timezone.now()
-                    attendance.break_start_time = None  # Clear any active break
-                    attendance.total_hours = self._calculate_total_hours(sessions)
-                    attendance.day_status = self._calculate_day_status(attendance.total_hours)
-                    attendance.save()
-                    
-                    # Log the auto-end event (with error handling)
-                    try:
-                        SessionLog.log_event(
-                            user=user,
-                            event_type='auto_end_day',
-                            date=today,
-                            notes='Auto-ended due to session timeout'
-                        )
-                    except Exception as e:
-                        print(f"Failed to log auto-end event: {e}")
-                    
-                    # Update local variables
-                    is_checked_in = False
-                    is_on_break = False
-                    day_ended = True
-                except Exception as e:
-                    print(f"Failed to auto-end workday: {e}")
+            # Session validation only - no auto-end of workday
+            # Users must manually end their workday
             
             # Calculate attendance status
             if day_ended:
@@ -1345,3 +1312,32 @@ class ApprovalViewSet(viewsets.ModelViewSet):
         # Non-staff can only view approvals where they are the approver
         return Approval.objects.filter(approver=user).order_by('-created_at')
 
+
+
+class SessionLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for SessionLog - read-only access for users to view their session history
+    """
+    queryset = SessionLog.objects.all().order_by('-timestamp')
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            # Staff can see all session logs
+            return SessionLog.objects.all().order_by('-timestamp')
+        else:
+            # Regular users can only see their own session logs
+            return SessionLog.objects.filter(user=user).order_by('-timestamp')
+    
+    def get_serializer_class(self):
+        # Create a simple serializer for SessionLog
+        from rest_framework import serializers
+        
+        class SessionLogSerializer(serializers.ModelSerializer):
+            class Meta:
+                model = SessionLog
+                fields = ['id', 'user', 'event_type', 'timestamp', 'date', 'session_count', 'location', 'notes']
+                read_only_fields = ['id', 'user', 'event_type', 'timestamp', 'date', 'session_count', 'location', 'notes']
+        
+        return SessionLogSerializer
