@@ -25,8 +25,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-6+v)y*%5fik7-b2yds)tue1z$h#drd^+rxyyo1c2o7oj7!@fs^'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
-ALLOWED_HOSTS = ['api.digiwavetechnologies.in', 'digiwavetechnologies.in']
+DEBUG = True
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'api.digiwavetechnologies.in', 'digiwavetechnologies.in']
 
 # URL Configuration
 APPEND_SLASH = False
@@ -96,22 +96,22 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='ermsdb'),
-        'USER': config('DB_USER', default='ermsuser'),
-        'PASSWORD': config('DB_PASSWORD', default='Erms@12345'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': config('DB_NAME', default='ermsdb'),
+#         'USER': config('DB_USER', default='ermsuser'),
+#         'PASSWORD': config('DB_PASSWORD', default='Erms@12345'),
+#         'HOST': config('DB_HOST', default='localhost'),
+#         'PORT': config('DB_PORT', default='5432'),
+#     }
+# }
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
