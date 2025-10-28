@@ -36,6 +36,8 @@ class ProjectSerializer(serializers.ModelSerializer):
     project_folder_detail = serializers.SerializerMethodField()
     total_expenses = serializers.ReadOnlyField()
     profit_loss = serializers.ReadOnlyField()
+    payments = serializers.SerializerMethodField()
+    received_payments = serializers.SerializerMethodField()
     
     # Override date fields to use flexible format
     inquiry_date = FlexibleDateField(required=False, allow_null=True)
@@ -48,6 +50,27 @@ class ProjectSerializer(serializers.ModelSerializer):
             from files.serializers import FolderListSerializer
             return FolderListSerializer(obj.project_folder).data
         return None
+    
+    def get_payments(self, obj):
+        from assets.models import Payment
+        payments = Payment.objects.filter(project=obj).order_by('-date')
+        return [{
+            'id': payment.id,
+            'amount': float(payment.amount),
+            'date': payment.date,
+            'method': payment.method,
+            'details': payment.details,
+            'status': {
+                'id': payment.status.id,
+                'name': payment.status.name
+            } if payment.status else None
+        } for payment in payments]
+    
+    def get_received_payments(self, obj):
+        from assets.models import Payment
+        from django.db.models import Sum
+        total = Payment.objects.filter(project=obj).aggregate(Sum('amount'))['amount__sum']
+        return float(total) if total else 0
     
     class Meta:
         model = Project
