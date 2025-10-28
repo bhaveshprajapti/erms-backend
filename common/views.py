@@ -46,6 +46,23 @@ class TechnologyViewSet(viewsets.ModelViewSet):
 class ShiftViewSet(viewsets.ModelViewSet):
     queryset = Shift.objects.all()
     serializer_class = ShiftSerializer
+    
+    def get_queryset(self):
+        """
+        Filter shifts based on query parameters.
+        By default, return only active shifts for non-admin operations.
+        Use ?all=true to get all shifts (for admin management).
+        """
+        queryset = Shift.objects.all()
+        
+        # Check if 'all' parameter is provided (for admin management)
+        show_all = self.request.query_params.get('all', 'false').lower() == 'true'
+        
+        if not show_all:
+            # For general use, only return active shifts
+            queryset = queryset.filter(is_active=True)
+        
+        return queryset.order_by('name')
 
 class HolidayViewSet(viewsets.ModelViewSet):
     queryset = Holiday.objects.all()

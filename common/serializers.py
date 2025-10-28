@@ -84,6 +84,41 @@ class ShiftSerializer(serializers.ModelSerializer):
                 field.required = False
                 if hasattr(field, 'allow_blank'):
                     field.allow_blank = True
+    
+    def validate(self, data):
+        """
+        Validate that the shift time combination is unique
+        """
+        # Only validate time uniqueness if time fields are being updated
+        start_time = data.get('start_time')
+        end_time = data.get('end_time')
+        
+        # For partial updates, only validate if at least one time field is being changed
+        if self.instance and 'start_time' not in data and 'end_time' not in data:
+            # Neither time field is being updated, skip time validation
+            return data
+        
+        # If we're updating, get the current values if not provided
+        if self.instance:
+            start_time = start_time if start_time is not None else self.instance.start_time
+            end_time = end_time if end_time is not None else self.instance.end_time
+        
+        # Check if both times are provided
+        if start_time and end_time:
+            # Build the query to check for existing shifts with same time
+            query = Shift.objects.filter(start_time=start_time, end_time=end_time)
+            
+            # If updating, exclude the current instance
+            if self.instance:
+                query = query.exclude(id=self.instance.id)
+            
+            if query.exists():
+                raise serializers.ValidationError({
+                    'start_time': 'A shift with this time combination already exists.',
+                    'end_time': 'A shift with this time combination already exists.'
+                })
+        
+        return data
 
 class HolidaySerializer(serializers.ModelSerializer):
     day_name = serializers.ReadOnlyField()
