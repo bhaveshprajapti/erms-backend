@@ -16,8 +16,8 @@ router.register(r'modules', ModuleViewSet)
 router.register(r'profile-update-requests', ProfileUpdateRequestViewSet, basename='profileupdaterequest')
 
 urlpatterns = [
-    path('login', custom_login, name='custom_login'),
-    path('logout', custom_logout, name='custom_logout'),
-    path('token/refresh', TokenRefreshView.as_view(), name='token_refresh'),
+    path('login/', custom_login, name='custom_login'),
+    path('logout/', custom_logout, name='custom_logout'),
+    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('', include(router.urls)),
 ]

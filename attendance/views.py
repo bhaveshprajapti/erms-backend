@@ -7,7 +7,7 @@ from django.utils import timezone
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from common.models import StatusChoice
-from common.timezone_utils import get_ist_time, get_ist_date, get_current_ist_date
+from common.timezone_utils import get_ist_time, get_ist_date, get_current_ist_date, format_time_12hour
 from .models import Attendance, LeaveRequest, TimeAdjustment, Approval, SessionLog
 from leave.models import FlexibleTimingRequest
 from .serializers import (
@@ -1132,8 +1132,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         shift = shifts.first()
 
         return Response({
-            'start_time': shift.start_time.strftime('%H:%M'),
-            'end_time': shift.end_time.strftime('%H:%M'),
+            'start_time': format_time_12hour(shift.start_time),
+            'end_time': format_time_12hour(shift.end_time),
             'shift_name': shift.name
         })
 
@@ -1155,8 +1155,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         shift = shifts.first()
 
         return Response({
-            'start_time': shift.start_time.strftime('%H:%M'),
-            'end_time': shift.end_time.strftime('%H:%M'),
+            'start_time': format_time_12hour(shift.start_time),
+            'end_time': format_time_12hour(shift.end_time),
             'shift_name': shift.name
         })
 
@@ -1314,9 +1314,9 @@ class ApprovalViewSet(viewsets.ModelViewSet):
 
 
 
-class SessionLogViewSet(viewsets.ReadOnlyModelViewSet):
+class SessionLogViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for SessionLog - read-only access for users to view their session history
+    ViewSet for SessionLog - with delete functionality for admin users
     """
     queryset = SessionLog.objects.all().order_by('-timestamp')
     permission_classes = [IsAuthenticated]
@@ -1330,14 +1330,233 @@ class SessionLogViewSet(viewsets.ReadOnlyModelViewSet):
             # Regular users can only see their own session logs
             return SessionLog.objects.filter(user=user).order_by('-timestamp')
     
+    def destroy(self, request, *args, **kwargs):
+        """Allow only staff to delete session logs"""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can delete session logs.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
+    
+    def create(self, request, *args, **kwargs):
+        """Prevent manual creation of session logs"""
+        return Response({'detail': 'Session logs are created automatically.'}, status=status.HTTP_403_FORBIDDEN)
+    
+    def update(self, request, *args, **kwargs):
+        """Prevent manual updates of session logs"""
+        return Response({'detail': 'Session logs cannot be modified.'}, status=status.HTTP_403_FORBIDDEN)
+    
+    @action(detail=False, methods=['delete'])
+    def clear_all_logs(self, request):
+        """Clear all session logs - admin only"""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can clear all logs.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Get count before deletion
+        total_count = SessionLog.objects.count()
+        
+        # Delete all session logs
+        SessionLog.objects.all().delete()
+        
+        return Response({
+            'message': f'Successfully cleared {total_count} session logs.',
+            'deleted_count': total_count
+        }, status=status.HTTP_200_OK)
+    
+    @action(detail=False, methods=['delete'])
+    def clear_user_logs(self, request):
+        """Clear all session logs for a specific user - admin only"""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can clear user logs.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response({'detail': 'user_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from accounts.models import User
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get count before deletion
+        user_logs_count = SessionLog.objects.filter(user=user).count()
+        
+        # Delete user's session logs
+        SessionLog.objects.filter(user=user).delete()
+        
+        return Response({
+            'message': f'Successfully cleared {user_logs_count} session logs for user {user.username}.',
+            'deleted_count': user_logs_count,
+            'user': user.username
+        }, status=status.HTTP_200_OK)
+    
+    @action(detail=False, methods=['delete'])
+    def clear_date_range_logs(self, request):
+        """Clear session logs within a date range - admin only"""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can clear logs by date range.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        start_date = request.data.get('start_date')
+        end_date = request.data.get('end_date')
+        
+        if not start_date or not end_date:
+            return Response({'detail': 'start_date and end_date are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from datetime import datetime
+            start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'detail': 'Invalid date format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get count before deletion
+        date_logs_count = SessionLog.objects.filter(date__gte=start_date_obj, date__lte=end_date_obj).count()
+        
+        # Delete logs in date range
+        SessionLog.objects.filter(date__gte=start_date_obj, date__lte=end_date_obj).delete()
+        
+        return Response({
+            'message': f'Successfully cleared {date_logs_count} session logs from {start_date} to {end_date}.',
+            'deleted_count': date_logs_count,
+            'start_date': start_date,
+            'end_date': end_date
+        }, status=status.HTTP_200_OK)
+    
+    def destroy(self, request, *args, **kwargs):
+        """Delete individual session log and recalculate attendance - admin only"""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Only staff can delete session logs.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        session_log = self.get_object()
+        user = session_log.user
+        date = session_log.date
+        
+        # Delete the session log
+        session_log.delete()
+        
+        # Recalculate attendance for that date
+        self._recalculate_attendance_for_date(user, date)
+        
+        return Response({
+            'message': 'Session log deleted and attendance recalculated successfully.',
+            'user': user.username,
+            'date': str(date)
+        }, status=status.HTTP_200_OK)
+    
+    def _recalculate_attendance_for_date(self, user, date):
+        """Recalculate attendance totals based on remaining session logs"""
+        try:
+            attendance = Attendance.objects.get(user=user, date=date)
+            
+            # Get remaining session logs for this date
+            remaining_logs = SessionLog.objects.filter(
+                user=user, 
+                date=date,
+                event_type__in=['check_in', 'check_out', 'start_break', 'end_break']
+            ).order_by('timestamp')
+            
+            # Rebuild sessions from remaining logs
+            sessions = []
+            current_session = {}
+            
+            for log in remaining_logs:
+                if log.event_type == 'check_in':
+                    if current_session and 'check_out' not in current_session:
+                        # Previous session was incomplete, close it
+                        sessions.append(current_session)
+                    current_session = {
+                        'check_in': log.timestamp.isoformat(),
+                        'location_in': log.location or {}
+                    }
+                elif log.event_type == 'check_out' and current_session:
+                    current_session['check_out'] = log.timestamp.isoformat()
+                    current_session['location_out'] = log.location or {}
+                    sessions.append(current_session)
+                    current_session = {}
+                elif log.event_type == 'start_break' and current_session:
+                    # End current session for break
+                    current_session['check_out'] = log.timestamp.isoformat()
+                    current_session['location_out'] = log.location or {}
+                    sessions.append(current_session)
+                    current_session = {}
+                elif log.event_type == 'end_break':
+                    # Start new session after break
+                    current_session = {
+                        'check_in': log.timestamp.isoformat(),
+                        'location_in': log.location or {}
+                    }
+            
+            # Add incomplete session if exists
+            if current_session:
+                sessions.append(current_session)
+            
+            # Update attendance record
+            attendance.sessions = sessions
+            
+            # Recalculate totals
+            from datetime import timedelta
+            total_seconds = 0
+            break_seconds = 0
+            
+            # Calculate working hours from completed sessions
+            for session in sessions:
+                if 'check_in' in session and 'check_out' in session:
+                    check_in = timezone.datetime.fromisoformat(session['check_in'])
+                    check_out = timezone.datetime.fromisoformat(session['check_out'])
+                    duration = check_out - check_in
+                    total_seconds += duration.total_seconds()
+            
+            # Calculate break time between sessions
+            for i in range(1, len(sessions)):
+                prev_session = sessions[i-1]
+                curr_session = sessions[i]
+                
+                if 'check_out' in prev_session and 'check_in' in curr_session:
+                    prev_checkout = timezone.datetime.fromisoformat(prev_session['check_out'])
+                    curr_checkin = timezone.datetime.fromisoformat(curr_session['check_in'])
+                    break_duration = curr_checkin - prev_checkout
+                    break_seconds += break_duration.total_seconds()
+            
+            attendance.total_hours = timedelta(seconds=total_seconds) if total_seconds > 0 else None
+            attendance.total_break_time = timedelta(seconds=break_seconds) if break_seconds > 0 else None
+            
+            # Reset break start time if no active break
+            attendance.break_start_time = None
+            
+            # Check if day should still be marked as ended
+            end_of_day_logs = SessionLog.objects.filter(
+                user=user, 
+                date=date,
+                event_type='end_of_day'
+            ).exists()
+            
+            if not end_of_day_logs:
+                attendance.day_ended = False
+                attendance.day_end_time = None
+                attendance.day_status = None
+            
+            attendance.save()
+            
+        except Attendance.DoesNotExist:
+            # If no attendance record exists, create one with empty sessions
+            Attendance.objects.create(
+                user=user,
+                date=date,
+                sessions=[],
+                total_hours=None,
+                total_break_time=None
+            )
+    
     def get_serializer_class(self):
         # Create a simple serializer for SessionLog
         from rest_framework import serializers
         
         class SessionLogSerializer(serializers.ModelSerializer):
+            user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+            user_username = serializers.CharField(source='user.username', read_only=True)
+            
             class Meta:
                 model = SessionLog
-                fields = ['id', 'user', 'event_type', 'timestamp', 'date', 'session_count', 'location', 'notes']
-                read_only_fields = ['id', 'user', 'event_type', 'timestamp', 'date', 'session_count', 'location', 'notes']
+                fields = ['id', 'user', 'user_name', 'user_username', 'event_type', 'timestamp', 'date', 'session_count', 'location', 'notes', 'ip_address', 'is_session_active', 'last_activity']
+                read_only_fields = ['id', 'user', 'user_name', 'user_username', 'event_type', 'timestamp', 'date', 'session_count', 'location', 'notes', 'ip_address', 'is_session_active', 'last_activity']
         
         return SessionLogSerializer

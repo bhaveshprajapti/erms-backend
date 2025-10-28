@@ -86,6 +86,8 @@ class ShiftSerializer(serializers.ModelSerializer):
                     field.allow_blank = True
 
 class HolidaySerializer(serializers.ModelSerializer):
+    day_name = serializers.ReadOnlyField()
+    
     class Meta:
         model = Holiday
         fields = '__all__'

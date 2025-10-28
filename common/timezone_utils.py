@@ -288,6 +288,38 @@ def get_working_days_between_ist_dates(start_date, end_date, exclude_weekends=Tr
     
     return working_days
 
+def format_time_12hour(time_obj):
+    """
+    Format time object to 12-hour format with AM/PM
+    
+    Args:
+        time_obj: time object
+    
+    Returns:
+        Formatted string in 12-hour format (e.g., "02:30 PM")
+    """
+    if time_obj is None:
+        return ""
+    
+    # Convert to datetime for formatting
+    dt = datetime.combine(date.today(), time_obj)
+    return dt.strftime('%I:%M %p')
+
+def format_datetime_12hour(datetime_obj):
+    """
+    Format datetime object to 12-hour format with AM/PM
+    
+    Args:
+        datetime_obj: datetime object
+    
+    Returns:
+        Formatted string in 12-hour format (e.g., "02:30 PM")
+    """
+    if datetime_obj is None:
+        return ""
+    
+    return datetime_obj.strftime('%I:%M %p')
+
 # Backward compatibility aliases
 def today_ist():
     """Get current IST date - backward compatibility"""
