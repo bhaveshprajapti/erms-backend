@@ -2,7 +2,7 @@ import os
 from django.contrib.auth import authenticate
 from django.conf import settings
 from rest_framework import serializers
-from .models import User, Role, ProfileUpdateRequest, Organization, Module, Permission
+from .models import User, Role, ProfileUpdateRequest, Organization, Module, Permission, EmployeePayment
 from common.models import Address, Designation, Technology, Shift
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -356,3 +356,41 @@ class ProfileUpdateRequestCreateSerializer(serializers.ModelSerializer):
         user = self.context['request'].user
         validated_data['user'] = user
         return super().create(validated_data)
+
+
+class EmployeePaymentSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source='employee.username', read_only=True)
+    employee_full_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = EmployeePayment
+        fields = [
+            'id', 'employee', 'employee_name', 'employee_full_name', 
+            'payment_type', 'amount', 'amount_per_hour', 'working_hours', 
+            'date', 'description', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['employee', 'created_at', 'updated_at']
+    
+    def get_employee_full_name(self, obj):
+        return f"{obj.employee.first_name} {obj.employee.last_name}"
+    
+    def validate(self, data):
+        payment_type = data.get('payment_type')
+        
+        if payment_type == 'hourly':
+            if not data.get('amount_per_hour') or not data.get('working_hours'):
+                raise serializers.ValidationError(
+                    "Amount per hour and working hours are required for hourly payments"
+                )
+            # Calculate total amount for hourly payments
+            data['amount'] = data['amount_per_hour'] * data['working_hours']
+        elif payment_type == 'fixed':
+            if not data.get('amount'):
+                raise serializers.ValidationError(
+                    "Amount is required for fixed payments"
+                )
+            # Clear hourly fields for fixed payments
+            data['amount_per_hour'] = None
+            data['working_hours'] = None
+        
+        return data

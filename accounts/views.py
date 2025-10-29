@@ -7,11 +7,12 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.authtoken.models import Token
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User, Organization, Role, Permission, Module, ProfileUpdateRequest
+from .models import User, Organization, Role, Permission, Module, ProfileUpdateRequest, EmployeePayment
 from .serializers import (
     UserListSerializer, UserDetailSerializer, OrganizationSerializer, 
     RoleSerializer, PermissionSerializer, ModuleSerializer,
-    ProfileUpdateRequestSerializer, ProfileUpdateRequestCreateSerializer
+    ProfileUpdateRequestSerializer, ProfileUpdateRequestCreateSerializer,
+    EmployeePaymentSerializer
 )
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -104,6 +105,39 @@ class PermissionViewSet(viewsets.ModelViewSet):
 class ModuleViewSet(viewsets.ModelViewSet):
     queryset = Module.objects.all().order_by('-created_at')
     serializer_class = ModuleSerializer
+
+
+class EmployeePaymentViewSet(viewsets.ModelViewSet):
+    serializer_class = EmployeePaymentSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = EmployeePayment.objects.all().order_by('-date', '-created_at')
+        
+        # Filter by employee if provided
+        employee_id = self.request.query_params.get('employee')
+        if employee_id:
+            queryset = queryset.filter(employee_id=employee_id)
+        
+        # Filter by payment type if provided
+        payment_type = self.request.query_params.get('payment_type')
+        if payment_type:
+            queryset = queryset.filter(payment_type=payment_type)
+        
+        return queryset
+    
+    def perform_create(self, serializer):
+        # Ensure the employee exists
+        employee_id = self.request.data.get('employee_id')
+        if not employee_id:
+            raise serializers.ValidationError({'employee_id': 'Employee ID is required'})
+        
+        try:
+            employee = User.objects.get(id=employee_id)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({'employee_id': 'Employee not found'})
+        
+        serializer.save(employee=employee)
 
 
 class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):

@@ -168,6 +168,33 @@ class User(AbstractUser):
         return self.employee_id if self.employee_id else self.username
 
 
+class EmployeePayment(models.Model):
+    PAYMENT_TYPE_CHOICES = [
+        ('fixed', 'Fixed Payment'),
+        ('hourly', 'Hourly Payment'),
+    ]
+    
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='employee_payments')
+    payment_type = models.CharField(max_length=10, choices=PAYMENT_TYPE_CHOICES)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, help_text="Total amount for fixed payments")
+    amount_per_hour = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Amount per hour for hourly payments")
+    working_hours = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True, help_text="Total working hours for hourly payments")
+    date = models.DateField(help_text="Payment date")
+    description = models.TextField(help_text="Payment description")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['employee', 'date']),
+            models.Index(fields=['payment_type', 'date']),
+        ]
+        ordering = ['-date', '-created_at']
+    
+    def __str__(self):
+        return f"{self.employee.username} - {self.get_payment_type_display()} - ₹{self.amount}"
+
+
 class ProfileUpdateRequest(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),
