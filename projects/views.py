@@ -1,7 +1,8 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db.models import Count, Q, Sum, F, Case, When, DecimalField
+from django.db.models import Count, Q, Sum, F, Case, When, DecimalField, Value
+from django.db.models.functions import Coalesce
 from decimal import Decimal
 from .models import Project, Task, TimeLog, TaskComment
 from .serializers import (
@@ -44,15 +45,15 @@ class ProjectViewSet(viewsets.ModelViewSet):
             total=Sum('amount')
         )['total'] or Decimal('0')
         
-        # Calculate total expenses (sum of all expense fields)
+        # Calculate total expenses (sum of all expense fields with null handling)
         total_expense = projects.aggregate(
             total=Sum(
-                F('other_expense') + 
-                F('developer_charge') + 
-                F('server_charge') + 
-                F('third_party_api_charge') + 
-                F('mediator_charge') + 
-                F('domain_charge'),
+                Coalesce('other_expense', Value(0)) + 
+                Coalesce('developer_charge', Value(0)) + 
+                Coalesce('server_charge', Value(0)) + 
+                Coalesce('third_party_api_charge', Value(0)) + 
+                Coalesce('mediator_charge', Value(0)) + 
+                Coalesce('domain_charge', Value(0)),
                 output_field=DecimalField(max_digits=12, decimal_places=2)
             )
         )['total'] or Decimal('0')
