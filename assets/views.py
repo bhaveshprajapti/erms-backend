@@ -34,6 +34,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         queryset = Payment.objects.all().order_by('-created_at')
         project_id = self.request.query_params.get('project', None)
         payment_type = self.request.query_params.get('type', None)
+        consolidate = self.request.query_params.get('consolidate', None)
         
         if project_id is not None and project_id != '':
             try:
@@ -50,10 +51,124 @@ class PaymentViewSet(viewsets.ModelViewSet):
         elif payment_type == 'to-developers':
             # Payments to developers (expenses) - have specific recipients
             queryset = queryset.filter(recipient__isnull=False)
+        
+        # If consolidate is requested, return one payment per project (latest one)
+        if consolidate == 'true' and payment_type == 'from-client':
+            # Get unique project IDs and return the latest payment for each project
+            from django.db.models import Max
+            
+            # Get the latest payment for each project
+            project_payments = queryset.values('project').annotate(
+                latest_id=Max('id')
+            )
+            
+            # Build a list of payment IDs to include (one per project)
+            payment_ids = [p['latest_id'] for p in project_payments if p['latest_id']]
+            
+            queryset = queryset.filter(id__in=payment_ids)
             
         return queryset
     
 
+
+    @action(detail=False, methods=['get'])
+    def consolidated(self, request):
+        """Get consolidated payments by project"""
+        payment_type = self.request.query_params.get('type', None)
+        
+        if payment_type != 'from-client':
+            return Response([])
+        
+        # Get all client payments
+        payments = Payment.objects.filter(recipient__isnull=True).order_by('-created_at')
+        
+        # Group by project and create consolidated entries
+        from django.db.models import Sum, Max
+        from collections import defaultdict
+        
+        consolidated_data = []
+        
+        # Get project-wise aggregated data
+        project_aggregates = payments.values('project').annotate(
+            total_amount=Sum('amount'),
+            latest_date=Max('date'),
+            latest_method=Max('method'),
+            latest_id=Max('id')
+        ).order_by('-latest_id')
+        
+        for aggregate in project_aggregates:
+            project_id = aggregate['project']
+            
+            # Get the latest payment for this project to use as base
+            if project_id is None:
+                latest_payment = payments.filter(
+                    project__isnull=True,
+                    id=aggregate['latest_id']
+                ).first()
+            else:
+                latest_payment = payments.filter(
+                    project_id=project_id,
+                    id=aggregate['latest_id']
+                ).first()
+            
+            if latest_payment:
+                try:
+                    # Create consolidated payment data
+                    consolidated_payment = {
+                        'id': latest_payment.id,
+                        'project': {
+                            'id': latest_payment.project.id if latest_payment.project else None,
+                            'project_id': latest_payment.project.project_id if latest_payment.project else 'General',
+                            'project_name': latest_payment.project.project_name if latest_payment.project else 'General Payment'
+                        } if latest_payment.project else None,
+                        'recipient': None,
+                        'amount': float(aggregate['total_amount']),
+                        'total_received': float(aggregate['total_amount']),
+                        'date': aggregate['latest_date'].isoformat() if aggregate['latest_date'] else None,
+                        'method': aggregate['latest_method'] or '',
+                        'details': latest_payment.details,
+                        'status': {
+                            'id': latest_payment.status.id if latest_payment.status else None,
+                            'name': latest_payment.status.name if latest_payment.status else None
+                        } if latest_payment.status else None,
+                        'created_at': latest_payment.created_at.isoformat() if latest_payment.created_at else None
+                    }
+                    
+                    # Calculate computed status and remaining amount
+                    if latest_payment.project:
+                        approval_amount = float(latest_payment.project.approval_amount or 0)
+                        total_received = float(aggregate['total_amount'])
+                        remaining_amount = max(0, approval_amount - total_received)
+                        
+                        consolidated_payment['remaining_amount'] = remaining_amount
+                        
+                        # Compute status
+                        if approval_amount == 0:
+                            status_name = 'Advanced'
+                        elif total_received >= approval_amount:
+                            status_name = 'Received'
+                        elif total_received > 0:
+                            status_name = 'Advanced'
+                        else:
+                            status_name = 'Pending'
+                        
+                        consolidated_payment['computed_status'] = {
+                            'id': None,
+                            'name': status_name
+                        }
+                    else:
+                        consolidated_payment['remaining_amount'] = None
+                        consolidated_payment['computed_status'] = {
+                            'id': None,
+                            'name': 'Pending'
+                        }
+                    
+                    consolidated_data.append(consolidated_payment)
+                except Exception as e:
+                    # Skip this payment if there's an error
+                    continue
+        
+        return Response(consolidated_data)
 
     @action(detail=False, methods=['get'])
     def stats(self, request):

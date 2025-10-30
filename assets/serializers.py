@@ -29,6 +29,7 @@ class PaymentSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
     remaining_amount = serializers.SerializerMethodField()
     computed_status = serializers.SerializerMethodField()
+    total_received = serializers.SerializerMethodField()
     
     # Add write-only fields for create/update
     project_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
@@ -66,14 +67,11 @@ class PaymentSerializer(serializers.ModelSerializer):
             }
         return None
     
-    def get_remaining_amount(self, obj):
-        """Calculate remaining amount for projects"""
+    def get_total_received(self, obj):
+        """Get total received payments for this project"""
         if not obj.project:
-            return None
+            return float(obj.amount)
             
-        # Get project's approval amount
-        approval_amount = obj.project.approval_amount or 0
-        
         # Get total received payments for this project
         from django.db.models import Sum
         total_received = obj.__class__.objects.filter(
@@ -81,12 +79,23 @@ class PaymentSerializer(serializers.ModelSerializer):
             recipient__isnull=True  # Only client payments (not developer payments)
         ).aggregate(total=Sum('amount'))['total'] or 0
         
+        return float(total_received)
+    
+    def get_remaining_amount(self, obj):
+        """Calculate remaining amount for projects"""
+        if not obj.project:
+            return None
+            
+        # Get project's approval amount
+        approval_amount = obj.project.approval_amount or 0
+        total_received = self.get_total_received(obj)
+        
         # Calculate remaining amount
-        remaining = float(approval_amount) - float(total_received)
+        remaining = float(approval_amount) - total_received
         return max(0, remaining)  # Don't return negative amounts
     
     def get_computed_status(self, obj):
-        """Compute status based on remaining amount"""
+        """Compute status based on approval amount and received payments"""
         if not obj.project:
             # For payments without projects, use the actual status
             if obj.status:
@@ -96,14 +105,21 @@ class PaymentSerializer(serializers.ModelSerializer):
                 }
             return {'id': None, 'name': 'Pending'}
             
-        remaining_amount = self.get_remaining_amount(obj)
+        approval_amount = float(obj.project.approval_amount or 0)
+        total_received = self.get_total_received(obj)
         
-        if remaining_amount is None:
-            return {'id': None, 'name': 'Pending'}
-        elif remaining_amount == 0:
-            return {'id': None, 'name': 'Paid'}
-        else:
+        # If approval amount is 0, any payment is considered "Advanced"
+        if approval_amount == 0:
             return {'id': None, 'name': 'Advanced'}
+        
+        # If we have received payments equal to or more than approval amount, it's "Received"
+        if total_received >= approval_amount:
+            return {'id': None, 'name': 'Received'}
+        # If we have received some payment but less than approval amount, it's "Advanced"
+        elif total_received > 0:
+            return {'id': None, 'name': 'Advanced'}
+        else:
+            return {'id': None, 'name': 'Pending'}
     
     def create(self, validated_data):
         # Handle the write-only fields
