@@ -1116,6 +1116,150 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=False, methods=['get'])
+    def payroll_stats(self, request):
+        """Get payroll statistics for a specific month and year"""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        year = int(request.query_params.get('year', timezone.now().year))
+        month = int(request.query_params.get('month', timezone.now().month))
+        
+        from calendar import monthrange
+        from common.models import Holiday
+        from django.contrib.auth import get_user_model
+        
+        User = get_user_model()
+        
+        # Calculate total days in month
+        total_days_in_month = monthrange(year, month)[1]
+        
+        # Calculate Sundays in the month
+        sundays_in_month = 0
+        for day in range(1, total_days_in_month + 1):
+            date_obj = timezone.datetime(year, month, day).date()
+            if date_obj.weekday() == 6:  # Sunday is 6
+                sundays_in_month += 1
+        
+        # Get holidays in the month
+        start_date = timezone.datetime(year, month, 1).date()
+        end_date = timezone.datetime(year, month, total_days_in_month).date()
+        
+        holidays_in_month = Holiday.objects.filter(
+            date__gte=start_date,
+            date__lte=end_date
+        ).count()
+        
+        # Calculate working days (total - sundays - holidays)
+        working_days_in_month = total_days_in_month - sundays_in_month - holidays_in_month
+        
+        # Get total active employees
+        total_employees = User.objects.filter(is_active=True, is_staff=False).count()
+        
+        return Response({
+            'total_days_in_month': total_days_in_month,
+            'working_days_in_month': working_days_in_month,
+            'holidays_and_sundays': sundays_in_month + holidays_in_month,
+            'sundays_in_month': sundays_in_month,
+            'holidays_in_month': holidays_in_month,
+            'total_employees': total_employees,
+            'year': year,
+            'month': month
+        })
+
+    @action(detail=False, methods=['get'])
+    def payroll_data(self, request):
+        """Get payroll data for all employees for a specific month and year"""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        year = int(request.query_params.get('year', timezone.now().year))
+        month = int(request.query_params.get('month', timezone.now().month))
+        
+        from calendar import monthrange
+        from django.contrib.auth import get_user_model
+        from leave.models import LeaveApplication
+        
+        User = get_user_model()
+        
+        # Get date range for the month
+        start_date = timezone.datetime(year, month, 1).date()
+        total_days_in_month = monthrange(year, month)[1]
+        end_date = timezone.datetime(year, month, total_days_in_month).date()
+        
+        # Calculate working days in month (excluding Sundays and holidays)
+        working_days = 0
+        for day in range(1, total_days_in_month + 1):
+            date_obj = timezone.datetime(year, month, day).date()
+            if date_obj.weekday() != 6:  # Not Sunday
+                working_days += 1
+        
+        # Subtract holidays
+        from common.models import Holiday
+        holidays_count = Holiday.objects.filter(
+            date__gte=start_date,
+            date__lte=end_date
+        ).count()
+        working_days -= holidays_count
+        
+        # Get all active employees
+        employees = User.objects.filter(is_active=True, is_staff=False)
+        
+        payroll_data = []
+        
+        for employee in employees:
+            # Get attendance records for the month
+            attendance_records = Attendance.objects.filter(
+                user=employee,
+                date__gte=start_date,
+                date__lte=end_date
+            )
+            
+            # Calculate present days (days with sessions)
+            present_days = 0
+            for attendance in attendance_records:
+                if attendance.sessions and len(attendance.sessions) > 0:
+                    # Check if any session has check_in
+                    if any(session.get('check_in') for session in attendance.sessions):
+                        present_days += 1
+            
+            # Get approved leave days for the month
+            leave_applications = LeaveApplication.objects.filter(
+                user=employee,
+                start_date__lte=end_date,
+                end_date__gte=start_date,
+                status='approved'
+            )
+            
+            leave_days = 0
+            for leave_app in leave_applications:
+                # Calculate overlapping days with the month
+                leave_start = max(leave_app.start_date, start_date)
+                leave_end = min(leave_app.end_date, end_date)
+                
+                if leave_start <= leave_end:
+                    # Count days in the range
+                    current_date = leave_start
+                    while current_date <= leave_end:
+                        # Only count working days (not Sundays)
+                        if current_date.weekday() != 6:
+                            leave_days += 1
+                        current_date += timezone.timedelta(days=1)
+            
+            # Calculate absent days (working days - present days - leave days)
+            absent_days = max(0, working_days - present_days - leave_days)
+            
+            payroll_data.append({
+                'employee_id': employee.employee_id or employee.username,
+                'employee_name': f"{employee.first_name} {employee.last_name}".strip() or employee.username,
+                'total_present_days': present_days,
+                'total_leave_days': leave_days,
+                'total_absent_days': absent_days,
+                'working_days': working_days
+            })
+        
+        return Response(payroll_data)
+
+    @action(detail=False, methods=['get'])
     def get_shift_timing(self, request):
         """
         Get the shift timing for the currently authenticated user.
