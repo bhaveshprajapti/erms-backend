@@ -55,6 +55,7 @@ class LeaveTypePolicy(models.Model):
     max_per_month = models.PositiveIntegerField(null=True, blank=True, help_text="Maximum days per month")
     max_per_year = models.PositiveIntegerField(null=True, blank=True, help_text="Maximum days per year")
     max_consecutive_days = models.PositiveIntegerField(null=True, blank=True, help_text="Maximum consecutive days")
+    max_occurrences_per_month = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Maximum number of leave occurrences per month (can be fractional like 1.5)")
     
     # Notice and approval requirements
     min_notice_days = models.PositiveIntegerField(default=0, help_text="Minimum notice required in days")
@@ -122,6 +123,17 @@ class LeaveTypePolicy(models.Model):
             return False
         
         return True
+    
+    def save(self, *args, **kwargs):
+        """Override save to auto-sync max_per_month with max_occurrences_per_month"""
+        # Set max_per_month to the same value as max_occurrences_per_month
+        if self.max_occurrences_per_month is not None:
+            # Convert decimal to integer for max_per_month field
+            self.max_per_month = int(self.max_occurrences_per_month)
+        else:
+            self.max_per_month = None
+            
+        super().save(*args, **kwargs)
 
 
 class LeaveBalance(models.Model):
@@ -186,8 +198,9 @@ class LeaveBalance(models.Model):
         if days <= 0:
             return False, "Invalid number of days"
         
-        if self.remaining_balance < days:
-            return False, f"Insufficient balance. Available: {self.remaining_balance}, Requested: {days}"
+        # Check balance including pending applications
+        if self.pending_balance < days:
+            return False, f"Insufficient balance. Available (including pending): {self.pending_balance}, Requested: {days}"
         
         # Check leave type specific policy restrictions
         if self.policy:
@@ -205,7 +218,7 @@ class LeaveBalance(models.Model):
                 if week_used + days > self.policy.max_per_week:
                     return False, f"Weekly limit exceeded. Limit: {self.policy.max_per_week}, Used: {week_used}, Requested: {days}"
             
-            # Check monthly limit
+            # Check monthly limit (days)
             if self.policy.max_per_month and start_date:
                 month_used = self.user.leave_applications.filter(
                     leave_type=self.leave_type,
@@ -216,6 +229,24 @@ class LeaveBalance(models.Model):
                 
                 if month_used + days > self.policy.max_per_month:
                     return False, f"Monthly limit exceeded. Limit: {self.policy.max_per_month}, Used: {month_used}, Requested: {days}"
+            
+            # Check monthly occurrence limit
+            if self.policy.max_occurrences_per_month is not None and start_date:
+                month_occurrences = self.user.leave_applications.filter(
+                    leave_type=self.leave_type,
+                    status__in=['approved', 'pending'],
+                    start_date__year=start_date.year,
+                    start_date__month=start_date.month
+                ).count()
+                
+                # Calculate the occurrence value for this request
+                # Full day = 1 occurrence, Half day = 0.5 occurrence
+                current_occurrence = Decimal('0.5') if days == Decimal('0.5') else Decimal('1.0')
+                
+                total_occurrences = Decimal(str(month_occurrences)) + current_occurrence
+                
+                if total_occurrences > self.policy.max_occurrences_per_month:
+                    return False, f"Monthly occurrence limit exceeded. Limit: {self.policy.max_occurrences_per_month}, Used: {month_occurrences}, Requested: {current_occurrence}"
         
         # Check overall leave policy restrictions
         overall_policies = OverallLeavePolicy.objects.filter(is_active=True)
@@ -382,7 +413,45 @@ class LeaveApplication(models.Model):
     
     def save(self, *args, **kwargs):
         self.clean()
+        
+        # Auto-approval logic for new applications
+        is_new = self.pk is None
+        if is_new and self.status == 'pending' and self.policy:
+            # Check if policy allows auto-approval
+            if not self.policy.requires_approval:
+                self.status = 'approved'
+                self.approved_at = timezone.now()
+                # Set approved_by to system user or leave it None for auto-approval
+                # You can create a system user for this purpose
+                
         super().save(*args, **kwargs)
+        
+        # If auto-approved, update leave balance
+        if is_new and self.status == 'approved':
+            self._update_leave_balance_on_approval()
+    
+    def _update_leave_balance_on_approval(self):
+        """Update leave balance when application is approved"""
+        try:
+            balance, created = LeaveBalance.objects.get_or_create(
+                user=self.user,
+                leave_type=self.leave_type,
+                year=self.start_date.year,
+                defaults={
+                    'policy': self.policy,
+                    'opening_balance': self.policy.annual_quota if self.policy else 0
+                }
+            )
+            
+            # Deduct the approved days from balance
+            balance.used_balance += self.total_days
+            balance.save()
+            
+        except Exception as e:
+            # Log the error but don't fail the save
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to update leave balance for application {self.id}: {str(e)}")
     
     def can_be_cancelled(self):
         """Check if application can be cancelled by user"""

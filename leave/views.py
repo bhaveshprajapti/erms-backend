@@ -123,6 +123,35 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
         
         serializer = LeaveTypeSerializer(available_types, many=True)
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['get'])
+    def applicable_policy(self, request, pk=None):
+        """Get applicable policy for the current user and this leave type"""
+        user = request.user
+        leave_type = self.get_object()
+        
+        # Find applicable policy
+        applicable_policies = leave_type.policies.filter(
+            is_active=True,
+            effective_from__lte=date.today()
+        ).filter(
+            Q(effective_to__isnull=True) | Q(effective_to__gte=date.today())
+        )
+        
+        applicable_policy = None
+        for policy in applicable_policies:
+            if policy.is_applicable_for_user(user):
+                applicable_policy = policy
+                break
+        
+        if applicable_policy:
+            serializer = LeaveTypePolicySerializer(applicable_policy)
+            return Response(serializer.data)
+        else:
+            return Response(
+                {'error': 'No applicable policy found for this leave type'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 
 class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
@@ -582,7 +611,17 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
                 'start_date': 'Leave start date cannot be more than 1 year in the future.'
             })
         
-        serializer.save(user=self.request.user)
+        # Save the application with auto-approval logic
+        application = serializer.save(user=self.request.user)
+        
+        # Check for auto-approval after saving (backup logic)
+        if application.policy and not application.policy.requires_approval and application.status == 'pending':
+            application.status = 'approved'
+            application.approved_at = timezone.now()
+            application.save()
+            
+            # Send notification about auto-approval if needed
+            # You can add notification logic here
     
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):

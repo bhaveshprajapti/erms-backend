@@ -49,7 +49,8 @@ class LeaveTypePolicyAdmin(admin.ModelAdmin):
         }),
         ('Usage Limits', {
             'fields': (
-                'max_per_week', 'max_per_month', 'max_per_year', 'max_consecutive_days'
+                'max_per_week', 'max_per_month', 'max_per_year', 'max_consecutive_days',
+                'max_occurrences_per_month'
             )
         }),
         ('Approval Requirements', {
