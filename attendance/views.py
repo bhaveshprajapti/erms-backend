@@ -148,28 +148,23 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             start_time = shift.start_time
             end_time = shift.end_time
             
-            # Detect overnight shift: either by flag or by end_time < start_time
-            is_overnight = shift.is_overnight or end_time < start_time
+            # Detect overnight shift ONLY by comparing times, ignore the flag
+            is_overnight = end_time < start_time
             
             if is_overnight:
                 # For overnight shifts, check if time is after start OR before end
                 if current_time_only >= start_time or current_time_only <= end_time:
                     return True
             else:
-                # For regular shifts
+                # For regular shifts (start_time <= end_time)
                 if check_in_grace:
                     # Allow check-in 3 hours before shift start (e.g., 7 AM for 10 AM shift)
                     early_start = (datetime.combine(datetime.today(), start_time) - timedelta(hours=3)).time()
-                    # Allow check-in up to 5 minutes after shift start (e.g., 10:05 AM for 10 AM shift)
-                    grace_end = (datetime.combine(datetime.today(), start_time) + timedelta(minutes=5)).time()
+                    # Allow check-in up to 15 minutes after shift start (e.g., 10:15 AM for 10 AM shift)
+                    grace_end = (datetime.combine(datetime.today(), start_time) + timedelta(minutes=15)).time()
                     
                     if early_start <= current_time_only <= grace_end:
                         return True
-                    
-                    # Allow check-in after grace period but minimum 4 hours before shift end (considered half day)
-                    min_work_end = (datetime.combine(datetime.today(), end_time) - timedelta(hours=4)).time()
-                    if grace_end < current_time_only <= min_work_end:
-                        return True, "half_day"  # Return tuple indicating half day
                         
                 elif allow_overtime:
                     # Allow check-out up to 4 hours after shift end for overtime
@@ -250,6 +245,101 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         
         return timedelta(seconds=total_break_seconds)
 
+    def _cleanup_previous_active_sessions(self, user, current_date, request):
+        """
+        Automatically cleanup any previous day's active sessions by calling existing methods.
+        This handles cases where users forgot to check out or end their day.
+        """
+        try:
+            # Find all attendance records for this user that are not from today and not ended
+            previous_attendances = Attendance.objects.filter(
+                user=user,
+                date__lt=current_date
+            ).exclude(
+                day_ended=True  # Skip already ended days
+            )
+            
+            cleanup_count = 0
+            for attendance in previous_attendances:
+                sessions = attendance.sessions or []
+                if not sessions:
+                    continue
+                
+                # Check if there's an active session or user is on break
+                has_active_session = sessions and 'check_out' not in sessions[-1]
+                is_on_break = hasattr(attendance, 'break_start_time') and attendance.break_start_time
+                
+                if has_active_session or is_on_break:
+                    cleanup_count += 1
+                    
+                    # Create a mock request for the cleanup operations
+                    from django.http import HttpRequest
+                    mock_request = HttpRequest()
+                    mock_request.user = user
+                    mock_request.method = 'POST'
+                    mock_request.data = {'location': {}}  # Empty location for cleanup
+                    
+                    # Temporarily override the date context by modifying the attendance date check
+                    # We'll call the existing methods which will operate on the attendance record
+                    
+                    # Step 1: If user is on break, end the break first
+                    if is_on_break:
+                        # Call the existing end_break method logic directly
+                        # Calculate break duration and add to total break time
+                        break_duration = timezone.now() - attendance.break_start_time
+                        if attendance.total_break_time is None:
+                            attendance.total_break_time = break_duration
+                        else:
+                            attendance.total_break_time += break_duration
+                        
+                        # Start new session to end the break
+                        new_session = {
+                            'check_in': timezone.now().isoformat(),
+                            'location_in': {}
+                        }
+                        sessions.append(new_session)
+                        attendance.sessions = sessions
+                        attendance.break_start_time = None
+                        attendance.total_hours = self._calculate_total_hours([s for s in sessions if 'check_out' in s])
+                        attendance.save()
+                    
+                    # Step 2: If there's still an active session, end it (end of day)
+                    if sessions and 'check_out' not in sessions[-1]:
+                        # Close the current session
+                        sessions[-1]['check_out'] = timezone.now().isoformat()
+                        sessions[-1]['location_out'] = {}
+                        
+                        # Calculate final totals and mark day as ended
+                        attendance.sessions = sessions
+                        attendance.total_hours = self._calculate_total_hours(sessions)
+                        attendance.day_ended = True
+                        attendance.day_end_time = timezone.now()
+                        
+                        # Calculate day status
+                        day_status = self._calculate_day_status(attendance.total_hours)
+                        attendance.day_status = day_status
+                        
+                        attendance.save()
+                    
+                    # Log the cleanup action
+                    try:
+                        SessionLog.log_event(
+                            user=user,
+                            event_type='auto_cleanup',
+                            date=attendance.date,
+                            session_count=len(sessions),
+                            notes=f'Automatic cleanup of previous day session. Day status: {getattr(attendance, "day_status", "Unknown")}',
+                            request=None
+                        )
+                    except Exception as e:
+                        print(f"Failed to log auto cleanup event: {e}")
+            
+            return cleanup_count
+            
+        except Exception as e:
+            print(f"Error during previous session cleanup: {e}")
+            return 0
+
     @action(detail=False, methods=['post'])
     def check_in(self, request):
         """Check-in action for employees with session logging and timeout validation"""
@@ -276,6 +366,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             # SessionLog table might not exist yet - continue without session management
             print(f"Session management not available in check_in: {e}")
             active_session = None
+        
+        # AUTOMATIC CLEANUP: Handle any previous day's active sessions silently
+        # This runs in the background before allowing new check-in
+        cleanup_count = self._cleanup_previous_active_sessions(user, today, request)
+        if cleanup_count > 0:
+            print(f"Auto-cleaned {cleanup_count} previous active session(s) for user {user.username}")
         
         # Check if user is on leave
         is_on_leave, leave_message = self._check_leave_status(user, today, now)
@@ -323,7 +419,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 
                 if not within_shift and not has_flexible_timing:
                     return Response({
-                        'detail': 'Check-in allowed 3 hours before shift start, up to 5 minutes after shift start, or minimum 4 hours before shift end.'
+                        'detail': 'Check-in allowed 3 hours before shift start, up to 15 minutes after shift start only.'
                     }, status=status.HTTP_400_BAD_REQUEST)
             # If admin reset override is active, skip shift validation for first check-in
         else:
@@ -754,7 +850,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     # User is outside allowed check-in window - needs admin intervention
                     return Response({
                         'needs_intervention': True,
-                        'reason': 'User missed check-in window (outside 3 hours before to 5 minutes after shift start)',
+                        'reason': 'User missed check-in window (outside 3 hours before to 15 minutes after shift start)',
                         'can_reset': True
                     })
             
