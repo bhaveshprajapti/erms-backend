@@ -316,7 +316,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                         attendance.day_end_time = timezone.now()
                         
                         # Calculate day status
-                        day_status = self._calculate_day_status(attendance.total_hours)
+                        day_status = self._calculate_day_status(attendance.total_hours, user)
                         attendance.day_status = day_status
                         
                         attendance.save()
@@ -699,7 +699,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         attendance.day_end_time = now
         
         # Calculate day status based on working hours
-        day_status = self._calculate_day_status(attendance.total_hours)
+        day_status = self._calculate_day_status(attendance.total_hours, user)
         attendance.day_status = day_status
         
         attendance.save()
@@ -741,35 +741,45 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             print(f"Session management not available in update_session_activity: {e}")
             return Response({'detail': 'Session management is not available.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def _calculate_day_status(self, total_hours):
-        """Calculate day status based on working hours"""
+    def _calculate_day_status(self, total_hours, user=None):
+        """Calculate day status based on working hours and employee type"""
         if not total_hours:
             return 'Absent'
         
         # Convert to total seconds
         total_seconds = total_hours.total_seconds()
         
-        # 3h50m to 4h = Half day
-        if 3 * 3600 + 50 * 60 <= total_seconds <= 4 * 3600:
-            return 'Half Day'
+        # Check if employee is a half-day employee type
+        is_half_day_employee = False
+        if user and user.employee_type:
+            employee_type_name = user.employee_type.name.lower()
+            # Check for various combinations of "half day" in employee type
+            half_day_patterns = ['half day', 'halfday', 'half-day']
+            is_half_day_employee = any(pattern in employee_type_name for pattern in half_day_patterns)
         
-        # 7h50m to 8h = Present (Full day)
-        if 7 * 3600 + 50 * 60 <= total_seconds <= 8 * 3600:
-            return 'Present'
+        if is_half_day_employee:
+            # Special rules for half-day employees
+            # More than 1 hour = Present
+            if total_seconds >= 1 * 3600:  # 1 hour or more
+                return 'Present'
+            # Less than 1 hour = Absent
+            else:
+                return 'Absent'
+        else:
+            # Standard rules for full-time employees
+            # Less than 3.5 hours = Absent
+            if total_seconds < 3.5 * 3600:
+                return 'Absent'
+            
+            # 3.5 to 7.5 hours = Half Day
+            if 3.5 * 3600 <= total_seconds < 7.5 * 3600:
+                return 'Half Day'
+            
+            # 7.5 hours or more = Present
+            if total_seconds >= 7.5 * 3600:
+                return 'Present'
         
-        # Less than 3h50m = Absent
-        if total_seconds < 3 * 3600 + 50 * 60:
-            return 'Absent'
-        
-        # More than 4h but less than 7h50m = Half Day
-        if 4 * 3600 < total_seconds < 7 * 3600 + 50 * 60:
-            return 'Half Day'
-        
-        # More than 8h = Present (with overtime)
-        if total_seconds > 8 * 3600:
-            return 'Present'
-        
-        return 'Half Day'
+        return 'Absent'
 
     @action(detail=False, methods=['get'])
     def check_admin_intervention_needed(self, request):
@@ -1014,25 +1024,44 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     # Overnight shift
                     min_hours = (24 * 3600 - start_seconds) + end_seconds
             
-            # Determine status based on working hours
-            # If user had approved leave but still came to office, prioritize actual attendance
-            if total_seconds >= min_hours * 0.75:  # 75% of shift duration
-                if has_approved_leave:
-                    return 'Present (Despite Leave)'
-                return 'Present'
-            elif total_seconds >= min_hours * 0.5:  # 50% of shift duration
-                if has_approved_leave:
-                    return 'Half Day (Despite Leave)'
-                return 'Half Day'
-            elif total_seconds > 0:  # Has some working time
-                if has_approved_leave:
-                    return 'Half Day (Despite Leave)'
-                return 'Half Day'
+            # Check if employee is a half-day employee type
+            is_half_day_employee = False
+            if user and user.employee_type:
+                employee_type_name = user.employee_type.name.lower()
+                # Check for various combinations of "half day" in employee type
+                half_day_patterns = ['half day', 'halfday', 'half-day', 'part time', 'parttime', 'part-time']
+                is_half_day_employee = any(pattern in employee_type_name for pattern in half_day_patterns)
+            
+            # Determine status based on working hours and employee type
+            if is_half_day_employee:
+                # Special rules for half-day employees
+                if total_seconds >= 1 * 3600:  # 1 hour or more
+                    if has_approved_leave:
+                        return 'Present (Despite Leave)'
+                    return 'Present'
+                else:
+                    if has_approved_leave:
+                        return 'On Leave'
+                    return 'Absent'
             else:
-                # Has sessions but no working time (check-in only)
-                if has_approved_leave:
-                    return 'On Leave'
-                return 'Absent'
+                # Standard rules for full-time employees
+                if total_seconds >= 7.5 * 3600:  # 7.5 hours or more
+                    if has_approved_leave:
+                        return 'Present (Despite Leave)'
+                    return 'Present'
+                elif total_seconds >= 3.5 * 3600:  # 3.5 to 7.5 hours
+                    if has_approved_leave:
+                        return 'Half Day (Despite Leave)'
+                    return 'Half Day'
+                elif total_seconds > 0:  # Has some working time but less than 3.5 hours
+                    if has_approved_leave:
+                        return 'Half Day (Despite Leave)'
+                    return 'Absent'
+                else:
+                    # Has sessions but no working time (check-in only)
+                    if has_approved_leave:
+                        return 'On Leave'
+                    return 'Absent'
         
         # Fallback
         if has_approved_leave:
