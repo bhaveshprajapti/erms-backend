@@ -1035,7 +1035,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             # Determine status based on working hours and employee type
             if is_half_day_employee:
                 # Special rules for half-day employees
-                if total_seconds >= 1 * 3600:  # 1 hour or more
+                if total_seconds >= 3 * 3600:  # 3 hour or more
                     if has_approved_leave:
                         return 'Present (Despite Leave)'
                     return 'Present'
