@@ -300,26 +300,125 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
 @permission_classes([IsAuthenticated])
 def custom_logout(request):
     """
-    Custom logout view that logs the logout event for session management.
+    Custom logout view that blacklists tokens and logs the logout event.
     """
     user = request.user
     
-    # Log the logout event (with backward compatibility)
     try:
-        from attendance.models import SessionLog
-        SessionLog.log_event(
-            user=user,
-            event_type='logout',
-            request=request,
-            notes='User initiated logout'
-        )
+        # Blacklist the refresh token if provided
+        refresh_token = request.data.get('refresh_token')
+        if refresh_token:
+            from rest_framework_simplejwt.tokens import RefreshToken
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+        
+        # Log the logout event (with backward compatibility)
+        try:
+            from attendance.models import SessionLog
+            SessionLog.log_event(
+                user=user,
+                event_type='logout',
+                request=request,
+                notes='User initiated logout - token blacklisted'
+            )
+        except Exception as e:
+            # SessionLog table might not exist yet - continue without session logging
+            print(f"Session logging not available: {e}")
+        
+        return Response({
+            'message': 'Logout successful. Please clear your browser cache if you experience any issues.'
+        }, status=status.HTTP_200_OK)
+        
     except Exception as e:
-        # SessionLog table might not exist yet - continue without session logging
-        print(f"Session logging not available: {e}")
+        # Even if blacklisting fails, allow logout to proceed
+        print(f"Token blacklisting failed: {e}")
+        
+        return Response({
+            'message': 'Logout completed.'
+        }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def token_refresh(request):
+    """
+    Custom token refresh endpoint with enhanced error handling
+    """
+    from rest_framework_simplejwt.tokens import RefreshToken
+    from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
     
-    return Response({
-        'message': 'Logout successful.'
-    }, status=status.HTTP_200_OK)
+    refresh_token = request.data.get('refresh')
+    
+    if not refresh_token:
+        return Response({
+            'error': 'Refresh token is required.',
+            'details': 'Please provide a valid refresh token.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        # Validate and refresh the token
+        refresh = RefreshToken(refresh_token)
+        
+        # Get the user from the token
+        user_id = refresh.payload.get('user_id')
+        if not user_id:
+            return Response({
+                'error': 'Invalid token.',
+                'details': 'Token does not contain valid user information.'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # Validate user exists and is active
+        try:
+            user_obj = User.objects.get(
+                id=user_id, 
+                deleted_at__isnull=True, 
+                is_active=True
+            )
+        except User.DoesNotExist:
+            return Response({
+                'error': 'User not found.',
+                'details': 'The user associated with this token no longer exists or is inactive.'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if user's organization is still active
+        if user_obj.organization and not user_obj.organization.is_active:
+            return Response({
+                'error': 'Organization is inactive.',
+                'details': 'Your organization account has been suspended.'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Generate new access token
+        access_token = refresh.access_token
+        
+        # Always rotate refresh token for enhanced security
+        new_refresh = RefreshToken.for_user(user_obj)
+        
+        # Update user's last login time
+        user_obj.last_login = timezone.now()
+        user_obj.save(update_fields=['last_login'])
+        
+        return Response({
+            'access': str(access_token),
+            'refresh': str(new_refresh),
+            'expires_in': 28800,  # 8 hours in seconds
+            'token_type': 'Bearer'
+        }, status=status.HTTP_200_OK)
+        
+    except TokenError as e:
+        return Response({
+            'error': 'Invalid or expired refresh token.',
+            'details': 'Your session has expired. Please login again.'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+    except User.DoesNotExist:
+        return Response({
+            'error': 'User not found.',
+            'details': 'The user associated with this token no longer exists.'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': 'Token refresh failed.',
+            'details': 'An error occurred while refreshing your session. Please login again.'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
@@ -418,10 +517,16 @@ def custom_login(request):
         'profile_picture': authenticated_user.profile_picture.url if authenticated_user.profile_picture else None,
     }
     
+    # Update user's last login time
+    authenticated_user.last_login = timezone.now()
+    authenticated_user.save(update_fields=['last_login'])
+    
     return Response({
         'access': str(access_token),
         'refresh': str(refresh),
         'message': 'Login successful.',
-        'user': user_data
+        'user': user_data,
+        'expires_in': 28800,  # 8 hours in seconds
+        'token_type': 'Bearer'
     }, status=status.HTTP_200_OK)
 
