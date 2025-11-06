@@ -1339,13 +1339,20 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 date__lte=end_date
             )
             
-            # Calculate present days (days with sessions)
-            present_days = 0
+            # Calculate present days (with decimal values for half days)
+            present_days = 0.0
             for attendance in attendance_records:
                 if attendance.sessions and len(attendance.sessions) > 0:
                     # Check if any session has check_in
                     if any(session.get('check_in') for session in attendance.sessions):
-                        present_days += 1
+                        # Calculate day status to determine if it's full day or half day
+                        day_status = self._calculate_day_status(attendance.total_hours, employee)
+                        
+                        if day_status == 'Present':
+                            present_days += 1.0  # Full day
+                        elif day_status == 'Half Day':
+                            present_days += 0.5  # Half day
+                        # Absent days are not counted (0.0)
             
             # Get approved leave days for the month
             leave_applications = LeaveApplication.objects.filter(
@@ -1355,7 +1362,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 status='approved'
             )
             
-            leave_days = 0
+            leave_days = 0.0
             for leave_app in leave_applications:
                 # Calculate overlapping days with the month
                 leave_start = max(leave_app.start_date, start_date)
@@ -1367,7 +1374,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     while current_date <= leave_end:
                         # Only count working days (not Sundays)
                         if current_date.weekday() != 6:
-                            leave_days += 1
+                            # Check if it's a half-day leave
+                            if leave_app.is_half_day:
+                                leave_days += 0.5  # Half day leave
+                            else:
+                                leave_days += 1.0  # Full day leave
                         current_date += timezone.timedelta(days=1)
             
             # Calculate absent days (working days - present days - leave days)

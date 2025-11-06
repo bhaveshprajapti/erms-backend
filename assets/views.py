@@ -1,6 +1,7 @@
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum, Count, Q
 from .models import (
     Directory, Folder, FileDocument, Expense, Payment, SalaryRecord
@@ -27,11 +28,33 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     serializer_class = ExpenseSerializer
 
 class PaymentViewSet(viewsets.ModelViewSet):
-    queryset = Payment.objects.all().order_by('-created_at')
+    queryset = Payment.objects.all().order_by('-date', '-created_at')  # Order by payment date first, then created_at
     serializer_class = PaymentSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_permissions(self):
+        """
+        Allow sub-admin (staff) and admin (superuser) to perform CRUD operations
+        """
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            # Only staff and superuser can create, update, delete
+            return [IsAuthenticated()]
+        return [IsAuthenticated()]
+    
+    def perform_create(self, serializer):
+        """Override to add any additional logic during creation"""
+        serializer.save()
+    
+    def perform_update(self, serializer):
+        """Override to add any additional logic during update"""
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Override to add any additional logic during deletion"""
+        instance.delete()
     
     def get_queryset(self):
-        queryset = Payment.objects.all().order_by('-created_at')
+        queryset = Payment.objects.all().order_by('-date', '-created_at')  # Order by payment date first
         project_id = self.request.query_params.get('project', None)
         payment_type = self.request.query_params.get('type', None)
         consolidate = self.request.query_params.get('consolidate', None)
@@ -80,7 +103,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
             return Response([])
         
         # Get all client payments
-        payments = Payment.objects.filter(recipient__isnull=True).order_by('-created_at')
+        payments = Payment.objects.filter(recipient__isnull=True).order_by('-date', '-created_at')
         
         # Group by project and create consolidated entries
         from django.db.models import Sum, Max
