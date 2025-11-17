@@ -10,12 +10,14 @@ from .serializers import (
 )
 
 # indrajit start
+
 from .models import ProjectDetails,AmountPayable,AmountReceived
 from .serializers import ProjectDetailSerializer,AmountPayableSerializer,AmountReceivedSerializer
 from .utils import StandredResponse
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+
 # indrajit end
 
 class ProjectViewSet(viewsets.ModelViewSet):
@@ -537,6 +539,7 @@ class AmountReceivedViewSet(StandredResponse, viewsets.ModelViewSet):
             data=None,
             message="Amount Received deleted successfully."
         )
+
 
 # indrajit end
     

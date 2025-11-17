@@ -5,6 +5,7 @@ from .views import (
 )
 
 # indrajit start
+
 from .views import ProjectDetailViewSet,AmountPayableViewSet,AmountReceivedViewSet
 # indrajit end
 
@@ -15,9 +16,11 @@ router.register(r'time-logs', TimeLogViewSet)
 router.register(r'task-comments', TaskCommentViewSet)
 
 # indrajit start
+
 router.register(r'project-details',ProjectDetailViewSet)
 router.register(r'amounts-payable', AmountPayableViewSet)
 router.register(r'amounts-received', AmountReceivedViewSet)
+
 # indrajit end
 
 urlpatterns = [

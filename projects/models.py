@@ -186,6 +186,7 @@ class TaskComment(models.Model):
 
 
 # indrajit start
+
 from django.contrib.postgres.fields import JSONField
 
 class ProjectDetails(models.Model):
@@ -334,4 +335,5 @@ class AmountReceived(models.Model):
     def __str__(self):
         client_name = self.client.name if self.client else (self.manual_client_name or 'N/A')
         return f"{self.title} - {self.amount} from Client: {self.client.name if self.client else 'N/A'}"
+    
 # indrajit end

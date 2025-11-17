@@ -6,10 +6,12 @@ from clients.serializers import QuotationListSerializer, ClientListSerializer
 from datetime import datetime
 
 # indrajit start
+
 from .models import ProjectDetails,AmountPayable,AmountReceived
 from rest_framework.validators import UniqueTogetherValidator
 from accounts.models import User
 from django.apps import apps
+
 # indrajit end
 
 class FlexibleDateField(serializers.DateField):
@@ -101,6 +103,7 @@ class TaskCommentSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 # indrajit start
+
 class ProjectDetailSerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source='project.project_name', read_only = True)
 
@@ -206,4 +209,5 @@ class AmountReceivedSerializer(serializers.ModelSerializer):
              raise serializers.ValidationError({'client': "Client is required for tracking received amounts."})
              
         return data
+
 # indrajit end

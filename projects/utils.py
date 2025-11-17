@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 class StandredResponse:
+
     def get_success_response(self,data,message,http_status=status.HTTP_200_OK):
         return Response({
             'status':http_status,
@@ -16,5 +17,6 @@ class StandredResponse:
             'message': message,
             'data': None
         }, status=http_status)
+    
     
 # indrajit start

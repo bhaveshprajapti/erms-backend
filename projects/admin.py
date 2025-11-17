@@ -5,7 +5,9 @@ from django.utils.safestring import mark_safe
 from .models import Project, Task, TimeLog, TaskComment
 
 # indrajit start
+
 from .models import ProjectDetails,AmountPayable,AmountReceived
+
 # indrajit end
 
 @admin.register(Project)
@@ -194,6 +196,7 @@ class TaskCommentAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related('task', 'user')
     
 # indrajit start
+
 @admin.register(ProjectDetails)
 class ProjectDetailAdmin(admin.ModelAdmin):
     list_display = ['project', 'type', 'amount', 'detail_preview', 'created_at']
@@ -229,4 +232,5 @@ class AmountReceivedAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('client')
+
 # indrajit end
