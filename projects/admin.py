@@ -4,6 +4,11 @@ from django.urls import reverse
 from django.utils.safestring import mark_safe
 from .models import Project, Task, TimeLog, TaskComment
 
+# indrajit start
+
+from .models import ProjectDetails,AmountPayable,AmountReceived
+
+# indrajit end
 
 @admin.register(Project)
 class ProjectAdmin(admin.ModelAdmin):
@@ -189,3 +194,43 @@ class TaskCommentAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('task', 'user')
+    
+# indrajit start
+
+@admin.register(ProjectDetails)
+class ProjectDetailAdmin(admin.ModelAdmin):
+    list_display = ['project', 'type', 'amount', 'detail_preview', 'created_at']
+    list_filter = ['type', 'project']
+    search_fields = ['detail', 'project__project_name', 'project__project_id']
+    readonly_fields = ['created_at', 'updated_at']
+
+    def detail_preview(self, obj):
+        return obj.detail[:50] + '...' if len(obj.detail) > 50 else obj.detail
+    detail_preview.short_description = 'Detail'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('project')
+    
+@admin.register(AmountPayable)
+class AmountPayableAdmin(admin.ModelAdmin):
+    list_display = ['title', 'amount', 'payment_mode', 'manual_paid_to_name','paid_to_employee','date', 'created_at']
+    list_filter = ['payment_mode', 'date']
+    search_fields = ['title', 'description','manual_paid_to_name']
+    fields = ['date', 'title', 'amount', 'payment_mode','manual_paid_to_name', 'paid_to_employee' , 'details_data', 'description', 'created_at', 'updated_at']
+    readonly_fields = ['created_at', 'updated_at']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('paid_to_employee')
+    
+@admin.register(AmountReceived)
+class AmountReceivedAdmin(admin.ModelAdmin):
+    list_display = ['title', 'amount', 'client','manual_client_name', 'payment_mode','date', 'created_at']
+    list_filter = ['payment_mode', 'date', 'client']
+    search_fields = ['title', 'description', 'client__name']
+    fields = ['date', 'title', 'amount', 'payment_mode', 'client','manual_client_name', 'details_data', 'description', 'created_at', 'updated_at'] 
+    readonly_fields = ['created_at', 'updated_at']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('client')
+
+# indrajit end

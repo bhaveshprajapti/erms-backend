@@ -184,3 +184,155 @@ class TaskComment(models.Model):
     def __str__(self):
         return f"Comment by {self.user.username} on {self.task.title}"
 
+# indrajit start
+
+from django.contrib.postgres.fields import JSONField
+
+class ProjectDetails(models.Model):
+    DETAIL_TYPE_CHOICES = [
+        ('Frontend', 'Frontend'),
+        ('Backend', 'Backend'),
+        ('Design', 'Design'),
+        ('Other', 'Other'),
+    ]
+
+    project = models.ForeignKey(
+        Project, 
+        on_delete=models.CASCADE,
+        related_name='project_details'
+    )
+    detail = models.TextField(verbose_name='Detail/Description')
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    type = models.CharField(
+        max_length=50, 
+        choices=DETAIL_TYPE_CHOICES, 
+        default='Other'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Project Detail"
+        verbose_name_plural = "Project Details"
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.project.project_name} - {self.type}"
+    
+
+class AmountPayable(models.Model):
+    PAYMENT_MODE_CHOICES = [
+        ('Bank', 'Bank Transfer'),
+        ('COD', 'Cod'),
+        ('UPI', 'UPI'),
+        ('Cheque', 'Cheque'),
+        ('Other', 'Other'),
+    ]
+
+    paid_to_employee = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payments_received'
+    )
+
+    # project = models.ForeignKey(
+    #     Project, 
+    #     on_delete=models.CASCADE,
+    #     related_name='amounts_payable', 
+    #     null=True, 
+    #     blank=True 
+    # )
+
+    manual_paid_to_name = models.CharField(
+        max_length=255, 
+        null=True, 
+        blank=True, 
+        verbose_name="Manual Recipient Name (If Employee FK is not set)"
+    )
+
+    date = models.DateField(default=timezone.now)
+    title = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    payment_mode = models.CharField(
+        max_length=50, 
+        choices=PAYMENT_MODE_CHOICES, 
+        default='Other'
+    )
+
+    details_data = models.JSONField(
+        null=True, 
+        blank=True, 
+        verbose_name='Payment Details (JSON)'
+    )    
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+
+    class Meta:
+        verbose_name = "Amount Payable"
+        verbose_name_plural = "Amounts Payable"
+        ordering = ['-date', 'created_at'] 
+
+    def __str__(self):
+        recipient_name = self.paid_to_employee.username if self.paid_to_employee else (self.manual_paid_to_name or 'N/A')
+        return f"{self.title} - {self.amount}"
+
+class AmountReceived(models.Model):
+    PAYMENT_MODE_CHOICES = [
+        ('Bank', 'Bank Transfer'),
+        ('Cash', 'Cash'),  
+        ('UPI', 'UPI'),
+        ('Cheque', 'Cheque'),
+        ('Other', 'Other'),
+    ]
+
+    client = models.ForeignKey(
+        'clients.Client',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payments_made'
+    )
+
+    manual_client_name = models.CharField(
+        max_length=255, 
+        null=True, 
+        blank=True, 
+        verbose_name="Manual Client Name (If Client is not set)"
+    )
+    
+
+    date = models.DateField(default=timezone.now)
+    title = models.CharField(max_length=255, verbose_name="Source of Income") 
+    description = models.TextField(null=True, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Amount Received")
+    payment_mode = models.CharField(
+        max_length=50, 
+        choices=PAYMENT_MODE_CHOICES, 
+        default='Other'
+    )
+
+    details_data = models.JSONField(
+        null=True, 
+        blank=True, 
+        verbose_name='Receipt Details (JSON)' 
+    )    
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+
+    class Meta:
+        verbose_name = "Amount Received"
+        verbose_name_plural = "Amounts Received"
+        ordering = ['-date', 'created_at'] 
+
+    def __str__(self):
+        client_name = self.client.name if self.client else (self.manual_client_name or 'N/A')
+        return f"{self.title} - {self.amount} from Client: {self.client.name if self.client else 'N/A'}"
+    
+# indrajit end
