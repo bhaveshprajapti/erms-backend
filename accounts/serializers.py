@@ -4,6 +4,7 @@ from django.conf import settings
 from rest_framework import serializers
 from .models import User, Role, ProfileUpdateRequest, Organization, Module, Permission, EmployeePayment
 from common.models import Address, Designation, Technology, Shift
+from common.serializers import AddressSerializer
 
 class OrganizationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -63,6 +64,10 @@ class UserDetailSerializer(serializers.ModelSerializer):
     account_number = serializers.CharField(required=False, allow_blank=True)
     ifsc_code = serializers.CharField(required=False, allow_blank=True)
     branch = serializers.CharField(required=False, allow_blank=True)
+    
+    # Use AddressSerializer for read operations to return full object
+    current_address = AddressSerializer(read_only=True)
+    permanent_address = AddressSerializer(read_only=True)
     
     class Meta:
         model = User
