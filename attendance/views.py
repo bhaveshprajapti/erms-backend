@@ -807,6 +807,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         # Check if employee is a half-day employee type
         is_half_day_employee = False
         is_freelancer_employee = False 
+        is_ca_employee = False
         if user and user.employee_type:
             employee_type_name = user.employee_type.name.lower()
             half_day_patterns = ['half day', 'halfday', 'half-day','part time', 'parttime', 'part-time']
@@ -814,6 +815,18 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
             freelancer_patterns = ['freelancer', 'free lance','free-lance']
             is_freelancer_employee = any(pattern in employee_type_name for pattern in freelancer_patterns)
+
+            ca_patterns = ['ca', 'chartered accountant','chartered-accountant']
+            is_ca_employee = any(pattern in employee_type_name for pattern in ca_patterns)
+
+        # ca rule 
+        if is_ca_employee:
+            if total_seconds < 3.5 * 3600:
+                return 'Absent'
+            elif 3.5 * 3600 <= total_seconds < 6 * 3600:
+                return 'Half Day'
+            else:
+                return 'Present'
 
         if is_freelancer_employee:
             return 'Present' if total_seconds > 0 else 'Absent' 
@@ -1144,6 +1157,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             # Check if employee is a half-day employee type
             is_half_day_employee = False
             is_freelancer_employee = False
+            is_ca_employee = False 
             if user and user.employee_type:
                 employee_type_name = user.employee_type.name.lower()
                 # Check for various combinations of "half day" in employee type
@@ -1152,8 +1166,20 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
                 freelancer_patterns = ['freelancer', 'free lance','free-lance']
                 is_freelancer_employee = any(pattern in employee_type_name for pattern in freelancer_patterns)
+
+                ca_patterns = ['ca', 'chartered accountant','chartered-accountant']
+                is_ca_employee = any(pattern in employee_type_name for pattern in ca_patterns)
             
             # Determine status based on working hours and employee type
+
+            if is_ca_employee:
+                if total_seconds < 3.5 * 3600:
+                    return 'Absent'
+                elif 3.5 * 3600 <= total_seconds < 6 * 3600:
+                    return 'Half Day'
+                else:
+                    return 'Present'
+
             if is_freelancer_employee: 
                 if total_seconds > 0:
                     if has_approved_leave:
