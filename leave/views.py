@@ -34,7 +34,7 @@ from .flexible_timing_views import (
 
 class LeaveTypeViewSet(viewsets.ModelViewSet):
     """ViewSet for managing leave types"""
-    queryset = LeaveType.objects.all()
+    queryset = LeaveType.objects.all().order_by('-created_at')
     serializer_class = LeaveTypeSerializer
     permission_classes = [IsAuthenticated]
     
@@ -42,7 +42,52 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         if not self.request.user.is_staff:
             queryset = queryset.filter(is_active=True)
-        return queryset.order_by('name')
+        return queryset.order_by('-created_at')
+    
+    def perform_update(self, serializer):
+        """Handle leave type status changes with proper validation"""
+        leave_type = self.get_object()
+        old_is_active = leave_type.is_active
+        new_is_active = serializer.validated_data.get('is_active', old_is_active)
+        
+        # If deactivating leave type, check if it's used in active policies
+        if old_is_active and not new_is_active:
+            active_policies = LeaveTypePolicy.objects.filter(
+                leave_type=leave_type,
+                is_active=True
+            )
+            if active_policies.exists():
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({
+                    'is_active': "Cannot deactivate leave type. It is currently used in active policies. "
+                               "Please deactivate all related policies first."
+                })
+        
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Handle leave type deletion with proper validation"""
+        # Check if it's used in any policies (active or inactive)
+        policies = LeaveTypePolicy.objects.filter(leave_type=instance)
+        if policies.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                "Cannot delete leave type. It is used in leave policies. "
+                "Please delete all related policies first."
+            )
+        
+        # Check if there are any leave applications
+        applications = LeaveApplication.objects.filter(leave_type=instance)
+        if applications.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                "Cannot delete leave type. There are existing leave applications using this type."
+            )
+        
+        # Remove all balances for this leave type
+        LeaveBalance.objects.filter(leave_type=instance).delete()
+        
+        instance.delete()
     
     @action(detail=True, methods=['get'])
     def policies(self, request, pk=None):
@@ -78,11 +123,40 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
         
         serializer = LeaveTypeSerializer(available_types, many=True)
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['get'])
+    def applicable_policy(self, request, pk=None):
+        """Get applicable policy for the current user and this leave type"""
+        user = request.user
+        leave_type = self.get_object()
+        
+        # Find applicable policy
+        applicable_policies = leave_type.policies.filter(
+            is_active=True,
+            effective_from__lte=date.today()
+        ).filter(
+            Q(effective_to__isnull=True) | Q(effective_to__gte=date.today())
+        )
+        
+        applicable_policy = None
+        for policy in applicable_policies:
+            if policy.is_applicable_for_user(user):
+                applicable_policy = policy
+                break
+        
+        if applicable_policy:
+            serializer = LeaveTypePolicySerializer(applicable_policy)
+            return Response(serializer.data)
+        else:
+            return Response(
+                {'error': 'No applicable policy found for this leave type'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 
 class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
     """ViewSet for managing leave type policies"""
-    queryset = LeaveTypePolicy.objects.all()
+    queryset = LeaveTypePolicy.objects.all().order_by('-created_at')
     serializer_class = LeaveTypePolicySerializer
     permission_classes = [IsAuthenticated]
     
@@ -95,7 +169,116 @@ class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
         if not self.request.user.is_staff:
             queryset = queryset.filter(is_active=True)
         
-        return queryset.order_by('leave_type__name', 'name')
+        return queryset.order_by('-created_at')
+    
+    def perform_update(self, serializer):
+        """Handle leave policy status changes with balance management"""
+        policy = self.get_object()
+        old_is_active = policy.is_active
+        new_is_active = serializer.validated_data.get('is_active', old_is_active)
+        
+        # Save the changes first
+        serializer.save()
+        
+        # Handle balance changes if status changed
+        if old_is_active != new_is_active:
+            if new_is_active:
+                # Policy activated - assign balances
+                self._assign_policy_balances(policy)
+            else:
+                # Policy deactivated - remove balances
+                self._remove_policy_balances(policy)
+    
+    def perform_destroy(self, instance):
+        """Handle leave policy deletion with balance cleanup"""
+        # Remove all balances associated with this policy
+        self._remove_policy_balances(instance)
+        instance.delete()
+    
+    def _assign_policy_balances(self, policy):
+        """Assign leave balances to users based on the policy"""
+        from accounts.models import User
+        from datetime import date
+        from django.db import transaction
+        
+        current_year = date.today().year
+        
+        try:
+            with transaction.atomic():
+                # Get all active users
+                users = User.objects.filter(is_active=True)
+                
+                created_count = 0
+                updated_count = 0
+                
+                for user in users:
+                    # Check if policy is applicable to this user
+                    if policy.is_applicable_for_user(user):
+                        # Create or update balance
+                        balance, created = LeaveBalance.objects.get_or_create(
+                            user=user,
+                            leave_type=policy.leave_type,
+                            year=current_year,
+                            defaults={
+                                'policy': policy,
+                                'opening_balance': policy.annual_quota,
+                                'accrued_balance': 0,
+                                'used_balance': 0,
+                                'carried_forward': 0,
+                                'adjustment': 0
+                            }
+                        )
+                        
+                        if created:
+                            created_count += 1
+                        else:
+                            # Update existing balance with new policy if it didn't have one
+                            if not balance.policy or balance.policy.id != policy.id:
+                                balance.policy = policy
+                                balance.opening_balance = policy.annual_quota
+                                balance.save()
+                                updated_count += 1
+                
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"Policy {policy.name} activation: created {created_count} new balances, "
+                    f"updated {updated_count} existing balances"
+                )
+                
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error assigning balances for policy {policy.name}: {str(e)}")
+            raise
+    
+    def _remove_policy_balances(self, policy):
+        """Remove leave balances for users who had this policy assigned"""
+        from django.db import transaction
+        
+        try:
+            with transaction.atomic():
+                # Find all balances that reference this policy
+                balances_to_remove = LeaveBalance.objects.filter(policy=policy)
+                
+                # Log the removal
+                count = balances_to_remove.count()
+                if count > 0:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(
+                        f"Removing {count} leave balances for policy {policy.name} "
+                        f"({policy.leave_type.name})"
+                    )
+                    
+                    # Remove the balances
+                    balances_to_remove.delete()
+                
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error removing balances for policy {policy.name}: {str(e)}")
+            raise
     
     @action(detail=True, methods=['post'])
     def clone(self, request, pk=None):
@@ -143,7 +326,7 @@ class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
 
 class LeaveBalanceViewSet(viewsets.ModelViewSet):
     """ViewSet for managing leave balances"""
-    queryset = LeaveBalance.objects.all()
+    queryset = LeaveBalance.objects.all().order_by('-created_at')
     serializer_class = LeaveBalanceSerializer
     permission_classes = [IsAuthenticated]
     
@@ -170,7 +353,7 @@ class LeaveBalanceViewSet(viewsets.ModelViewSet):
             # Default to current year
             queryset = queryset.filter(year=date.today().year)
         
-        return queryset.order_by('user__username', 'leave_type__name')
+        return queryset.order_by('-year', '-created_at')
     
     @action(detail=False, methods=['get'])
     def my_balances(self, request):
@@ -355,7 +538,7 @@ class LeaveBalanceViewSet(viewsets.ModelViewSet):
 
 class LeaveApplicationViewSet(viewsets.ModelViewSet):
     """ViewSet for managing leave applications"""
-    queryset = LeaveApplication.objects.all()
+    queryset = LeaveApplication.objects.all().order_by('-applied_at')
     permission_classes = [IsAuthenticated]
     
     def get_serializer_class(self):
@@ -397,7 +580,48 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
         return queryset.select_related('user', 'leave_type', 'policy', 'approved_by').order_by('-applied_at')
     
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        # Validate dates before saving
+        start_date = serializer.validated_data.get('start_date')
+        end_date = serializer.validated_data.get('end_date')
+        
+        # Import timezone utilities for proper date validation
+        from common.timezone_utils import get_current_ist_date
+        from rest_framework.exceptions import ValidationError
+        
+        current_date = get_current_ist_date()
+        
+        # Check if start date is in the past
+        if start_date < current_date:
+            raise ValidationError({
+                'start_date': 'Leave start date cannot be in the past. Please select a future date.'
+            })
+        
+        # Check if end date is before start date
+        if end_date < start_date:
+            raise ValidationError({
+                'end_date': 'Leave end date cannot be before the start date.'
+            })
+        
+        # Check if dates are too far in the future (business rule)
+        from datetime import timedelta
+        max_future_date = current_date + timedelta(days=365)  # 1 year ahead
+        
+        if start_date > max_future_date:
+            raise ValidationError({
+                'start_date': 'Leave start date cannot be more than 1 year in the future.'
+            })
+        
+        # Save the application with auto-approval logic
+        application = serializer.save(user=self.request.user)
+        
+        # Check for auto-approval after saving (backup logic)
+        if application.policy and not application.policy.requires_approval and application.status == 'pending':
+            application.status = 'approved'
+            application.approved_at = timezone.now()
+            application.save()
+            
+            # Send notification about auto-approval if needed
+            # You can add notification logic here
     
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -409,9 +633,14 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
             )
         
         application = self.get_object()
-        if application.status != 'pending':
+        
+        # Check if application dates are in the past
+        from common.timezone_utils import get_current_ist_date
+        current_date = get_current_ist_date()
+        
+        if application.start_date < current_date:
             return Response(
-                {'error': 'Only pending applications can be approved'},
+                {'error': 'Cannot approve leave application as the start date has already passed'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -419,18 +648,53 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
         if serializer.is_valid():
             data = serializer.validated_data
             
-            if data['action'] == 'approve':
-                application.approve(request.user, data.get('comments'))
-                return Response({'message': 'Application approved successfully'})
-            else:
-                application.reject(
-                    request.user, 
-                    data['rejection_reason'],
-                    data.get('comments')
+            try:
+                if data['action'] == 'approve':
+                    application.approve(request.user, data.get('comments'))
+                    return Response({'message': 'Application approved successfully'})
+                else:
+                    application.reject(
+                        request.user, 
+                        data['rejection_reason'],
+                        data.get('comments')
+                    )
+                    return Response({'message': 'Application rejected successfully'})
+            except Exception as e:
+                return Response(
+                    {'error': f'Failed to process application: {str(e)}'},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
-                return Response({'message': 'Application rejected successfully'})
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """Reject a leave application"""
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        application = self.get_object()
+        
+        rejection_reason = request.data.get('rejection_reason', '')
+        comments = request.data.get('comments', '')
+        
+        if not rejection_reason:
+            return Response(
+                {'error': 'Rejection reason is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            application.reject(request.user, rejection_reason, comments)
+            return Response({'message': 'Application rejected successfully'})
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to reject application: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
     
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
@@ -445,13 +709,25 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
             )
         
         if not application.can_be_cancelled():
-            return Response(
-                {'error': 'Application cannot be cancelled'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            # Provide more specific error messages
+            if application.start_date < date.today():
+                return Response(
+                    {'error': 'Cannot cancel leave request as the start date has already passed'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            elif application.status not in ['draft', 'pending', 'approved']:
+                return Response(
+                    {'error': f'Cannot cancel leave request with status: {application.status}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            else:
+                return Response(
+                    {'error': 'Application cannot be cancelled'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
-        application.status = 'cancelled'
-        application.save()
+        # Use the new cancel method that handles balance restoration
+        application.cancel(cancelled_by=request.user)
         
         return Response({'message': 'Application cancelled successfully'})
     

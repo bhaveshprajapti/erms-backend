@@ -2,7 +2,7 @@ import os
 from django.contrib.auth import authenticate
 from django.conf import settings
 from rest_framework import serializers
-from .models import User, Role, ProfileUpdateRequest, Organization, Module, Permission
+from .models import User, Role, ProfileUpdateRequest, Organization, Module, Permission, EmployeePayment
 from common.models import Address, Designation, Technology, Shift
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -39,9 +39,9 @@ class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            'id', 'username', 'first_name', 'last_name', 'email', 'phone',
+            'id', 'employee_id', 'username', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'is_active', 
-            'is_staff', 'is_superuser', 'designations', 'technologies', 'shifts'
+            'is_staff', 'is_superuser', 'designations', 'technologies', 'shifts', 'profile_picture'
         )
 
 class UserDetailSerializer(serializers.ModelSerializer):
@@ -67,7 +67,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            'id', 'username', 'password', 'first_name', 'last_name', 'email', 'phone',
+            'id', 'employee_id', 'username', 'password', 'plain_password', 'first_name', 'last_name', 'email', 'phone',
             'organization', 'role', 'employee_type', 'joining_date', 'birth_date',
             'gender', 'marital_status', 'is_active', 'is_staff', 'is_superuser', 'employee_details',
             'emergency_contact', 'emergency_phone', 'salary', 'designations', 'technologies', 'shifts',
@@ -79,7 +79,10 @@ class UserDetailSerializer(serializers.ModelSerializer):
         )
         extra_kwargs = {
             'password': {'write_only': True},
-            'folder_path': {'read_only': True}
+            'plain_password': {'write_only': True},
+            'folder_path': {'read_only': True},
+            'employee_id': {'read_only': True},
+            'username': {'read_only': True}
         }
 
     def validate(self, data):
@@ -108,8 +111,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         create_folder = validated_data.pop('create_folder', False)
-        # Don't pop password yet - let Django handle it in user creation
+        # Handle both password and plain_password
         password = validated_data.get('password', None)
+        plain_password = validated_data.get('plain_password', None)
         current_address_text = validated_data.pop('current_address_text', '')
         permanent_address_text = validated_data.pop('permanent_address_text', '')
         
@@ -155,6 +159,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
         
         if password:
             instance.set_password(password)
+            # Store plain password for admin viewing (if provided)
+            if plain_password:
+                instance.plain_password = plain_password
             instance.save()  # Save the instance after setting password
         
         # Create employee folder if requested
@@ -175,6 +182,32 @@ class UserDetailSerializer(serializers.ModelSerializer):
                     os.makedirs(subfolder_path, exist_ok=True)
                 
                 instance.folder_path = folder_path
+                
+                # Create database record for the folder
+                from files.models import Folder
+                main_folder = Folder.objects.create(
+                    name=f"Employee_{instance.first_name}_{instance.last_name}",
+                    employee=instance,
+                    created_by=instance,  # or get from request context if available
+                    is_employee_folder=True,
+                    is_system_folder=True,
+                    color='yellow',
+                    description=f"Employee folder for {instance.first_name} {instance.last_name}"
+                )
+                
+                # Create database records for subfolders
+                for subfolder_name in subfolders:
+                    Folder.objects.create(
+                        name=subfolder_name.title(),
+                        parent=main_folder,
+                        employee=instance,
+                        created_by=instance,
+                        is_employee_folder=True,
+                        is_system_folder=True,
+                        color='blue',
+                        description=f"{subfolder_name.title()} folder for {instance.first_name} {instance.last_name}"
+                    )
+                
                 print(f"Successfully created folder structure for employee {instance.username} at {folder_path}")
             except Exception as e:
                 # Log the error but don't fail the user creation
@@ -186,6 +219,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         create_folder = validated_data.pop('create_folder', False)
         password = validated_data.pop('password', None)
+        plain_password = validated_data.pop('plain_password', None)
         current_address_text = validated_data.pop('current_address_text', '')
         permanent_address_text = validated_data.pop('permanent_address_text', '')
         
@@ -242,6 +276,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
         
         if password:
             instance.set_password(password)
+            # Update plain password for admin viewing (if provided)
+            if plain_password:
+                instance.plain_password = plain_password
             instance.save()  # Save the instance after setting password
         
         # Create employee folder if requested and not already created
@@ -261,6 +298,32 @@ class UserDetailSerializer(serializers.ModelSerializer):
                     os.makedirs(subfolder_path, exist_ok=True)
                 
                 instance.folder_path = folder_path
+                
+                # Create database record for the folder
+                from files.models import Folder
+                main_folder = Folder.objects.create(
+                    name=f"Employee_{instance.first_name}_{instance.last_name}",
+                    employee=instance,
+                    created_by=instance,
+                    is_employee_folder=True,
+                    is_system_folder=True,
+                    color='yellow',
+                    description=f"Employee folder for {instance.first_name} {instance.last_name}"
+                )
+                
+                # Create database records for subfolders
+                for subfolder_name in subfolders:
+                    Folder.objects.create(
+                        name=subfolder_name.title(),
+                        parent=main_folder,
+                        employee=instance,
+                        created_by=instance,
+                        is_employee_folder=True,
+                        is_system_folder=True,
+                        color='blue',
+                        description=f"{subfolder_name.title()} folder for {instance.first_name} {instance.last_name}"
+                    )
+                
                 print(f"Successfully created folder structure for employee {instance.username} at {folder_path}")
             except Exception as e:
                 print(f"Failed to create folder for employee {instance.username}: {e}")
@@ -293,3 +356,41 @@ class ProfileUpdateRequestCreateSerializer(serializers.ModelSerializer):
         user = self.context['request'].user
         validated_data['user'] = user
         return super().create(validated_data)
+
+
+class EmployeePaymentSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source='employee.username', read_only=True)
+    employee_full_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = EmployeePayment
+        fields = [
+            'id', 'employee', 'employee_name', 'employee_full_name', 
+            'payment_type', 'amount', 'amount_per_hour', 'working_hours', 
+            'date', 'description', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['employee', 'created_at', 'updated_at']
+    
+    def get_employee_full_name(self, obj):
+        return f"{obj.employee.first_name} {obj.employee.last_name}"
+    
+    def validate(self, data):
+        payment_type = data.get('payment_type')
+        
+        if payment_type == 'hourly':
+            if not data.get('amount_per_hour') or not data.get('working_hours'):
+                raise serializers.ValidationError(
+                    "Amount per hour and working hours are required for hourly payments"
+                )
+            # Calculate total amount for hourly payments
+            data['amount'] = data['amount_per_hour'] * data['working_hours']
+        elif payment_type == 'fixed':
+            if not data.get('amount'):
+                raise serializers.ValidationError(
+                    "Amount is required for fixed payments"
+                )
+            # Clear hourly fields for fixed payments
+            data['amount_per_hour'] = None
+            data['working_hours'] = None
+        
+        return data

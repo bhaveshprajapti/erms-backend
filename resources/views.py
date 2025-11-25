@@ -5,14 +5,14 @@ from .serializers import (
 )
 
 class EquipmentViewSet(viewsets.ModelViewSet):
-    queryset = Equipment.objects.all()
+    queryset = Equipment.objects.all().order_by('-created_at')
     serializer_class = EquipmentSerializer
 
 class InventoryViewSet(viewsets.ModelViewSet):
-    queryset = Inventory.objects.all()
+    queryset = Inventory.objects.all().order_by('-created_at')
     serializer_class = InventorySerializer
 
 class ResourceAllocationViewSet(viewsets.ModelViewSet):
-    queryset = ResourceAllocation.objects.all()
+    queryset = ResourceAllocation.objects.all().order_by('-created_at')
     serializer_class = ResourceAllocationSerializer
 

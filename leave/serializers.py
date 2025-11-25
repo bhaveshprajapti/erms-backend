@@ -49,7 +49,7 @@ class LeaveTypePolicySerializer(serializers.ModelSerializer):
             'id', 'name', 'leave_type', 'leave_type_name', 'leave_type_code',
             'applicable_roles', 'applicable_roles_names', 'applicable_gender',
             'annual_quota', 'accrual_frequency', 'accrual_rate',
-            'max_per_week', 'max_per_month', 'max_per_year', 'max_consecutive_days',
+            'max_per_week', 'max_per_month', 'max_per_year', 'max_consecutive_days', 'max_occurrences_per_month',
             'min_notice_days', 'requires_approval', 'auto_approve_threshold',
             'carry_forward_enabled', 'carry_forward_limit', 'carry_forward_expiry_months',
             'min_tenure_days', 'available_during_probation',
@@ -70,6 +70,12 @@ class LeaveTypePolicySerializer(serializers.ModelSerializer):
         
         if data.get('carry_forward_enabled') and not data.get('carry_forward_limit'):
             raise serializers.ValidationError("Carry forward limit is required when carry forward is enabled")
+        
+        # Auto-sync max_per_month with max_occurrences_per_month
+        if data.get('max_occurrences_per_month') is not None:
+            data['max_per_month'] = int(data['max_occurrences_per_month'])
+        elif 'max_occurrences_per_month' in data and data['max_occurrences_per_month'] is None:
+            data['max_per_month'] = None
         
         return data
 
@@ -154,7 +160,7 @@ class LeaveApplicationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'applied_at', 'updated_at', 'approved_by', 'approved_at',
-            'can_be_cancelled', 'can_be_edited', 'can_be_deleted_by_user', 'can_be_deleted_by_admin', 'total_days'
+            'can_be_cancelled', 'can_be_edited', 'can_be_deleted_by_user', 'can_be_deleted_by_admin'
         ]
     
     def get_comments_count(self, obj):
@@ -230,8 +236,14 @@ class LeaveApplicationSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Create leave application with auto-calculated total_days"""
-        # The total_days will be calculated in the model's clean method
-        return super().create(validated_data)
+        # If total_days is provided, use it; otherwise it will be calculated in clean()
+        # The model's save() method calls clean() which recalculates total_days
+        instance = super().create(validated_data)
+        # Ensure clean() was called to calculate total_days
+        if instance.total_days == 0 and instance.start_date and instance.end_date:
+            instance.clean()
+            instance.save()
+        return instance
 
 
 class LeaveApplicationCreateSerializer(serializers.ModelSerializer):
@@ -282,7 +294,7 @@ class LeaveApplicationCreateSerializer(serializers.ModelSerializer):
                     f"that overlaps with the selected dates. Please choose different dates."
                 )
         
-        # Auto-assign applicable policy
+        # Auto-assign applicable policy and validate against it
         if leave_type and user:
             # Find the most suitable policy for this user and leave type
             applicable_policies = LeaveTypePolicy.objects.filter(
@@ -293,10 +305,47 @@ class LeaveApplicationCreateSerializer(serializers.ModelSerializer):
                 models.Q(effective_to__isnull=True) | models.Q(effective_to__gte=date.today())
             )
             
+            applicable_policy = None
             for policy in applicable_policies:
                 if policy.is_applicable_for_user(user):
+                    applicable_policy = policy
                     data['policy'] = policy
                     break
+            
+            # Validate against leave balance and policy limits
+            if applicable_policy and start_date and end_date:
+                # Get or create leave balance for current year
+                from .models import LeaveBalance
+                balance, created = LeaveBalance.objects.get_or_create(
+                    user=user,
+                    leave_type=leave_type,
+                    year=start_date.year,
+                    defaults={
+                        'policy': applicable_policy,
+                        'opening_balance': applicable_policy.annual_quota or 0
+                    }
+                )
+                
+                # Calculate days for this request
+                if is_half_day and start_date == end_date:
+                    request_days = Decimal('0.5')
+                else:
+                    days_count = (end_date - start_date).days + 1
+                    if applicable_policy and not applicable_policy.include_weekends:
+                        # Calculate working days only (exclude Sunday only)
+                        working_days = 0
+                        current_date = start_date
+                        while current_date <= end_date:
+                            if current_date.weekday() != 6:  # Monday = 0, Sunday = 6
+                                working_days += 1
+                            current_date += timedelta(days=1)
+                        days_count = working_days
+                    request_days = Decimal(str(days_count))
+                
+                # Validate against balance and policy limits
+                can_apply, error_message = balance.can_apply_for_days(request_days, start_date, end_date)
+                if not can_apply:
+                    raise serializers.ValidationError(error_message)
         
         return data
 

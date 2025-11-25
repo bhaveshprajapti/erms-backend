@@ -9,7 +9,7 @@ from .serializers import (
 )
 
 class LeaveTypeViewSet(viewsets.ModelViewSet):
-    queryset = LeaveType.objects.all()
+    queryset = LeaveType.objects.all().order_by('-created_at')
     serializer_class = LeaveTypeSerializer
 
     def perform_destroy(self, instance):
@@ -22,23 +22,22 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
         super().perform_destroy(instance)
 
 class LeavePolicyViewSet(viewsets.ModelViewSet):
-    queryset = LeavePolicy.objects.all()
+    queryset = LeavePolicy.objects.all().order_by('-created_at')
     serializer_class = LeavePolicySerializer
 
 class LeaveBalanceViewSet(viewsets.ModelViewSet):
-    queryset = LeaveBalance.objects.all()
+    queryset = LeaveBalance.objects.all().order_by('-updated_at')
     serializer_class = LeaveBalanceSerializer
 
 class FlexAllowanceTypeViewSet(viewsets.ModelViewSet):
-    queryset = FlexAllowanceType.objects.all()
+    queryset = FlexAllowanceType.objects.all().order_by('-created_at')
     serializer_class = FlexAllowanceTypeSerializer
 
 class FlexPolicyViewSet(viewsets.ModelViewSet):
-    queryset = FlexPolicy.objects.all()
+    queryset = FlexPolicy.objects.all().order_by('-created_at')
     serializer_class = FlexPolicySerializer
 
 class FlexBalanceViewSet(viewsets.ModelViewSet):
-    queryset = FlexBalance.objects.all()
-    serializer_class = FlexBalanceSerializer
+    queryset = FlexBalance.objects.all().order_by('-created_at')
     serializer_class = FlexBalanceSerializer
 
