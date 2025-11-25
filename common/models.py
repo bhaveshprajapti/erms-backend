@@ -67,6 +67,7 @@ class ProjectType(models.Model):
 
 class EmployeeType(models.Model):
     name = models.CharField(max_length=50, unique=True)
+    description = models.TextField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -132,61 +133,4 @@ class Holiday(models.Model):
 
     def __str__(self):
         return f"{self.title} ({self.date})"
-
-    @property
-    def day_name(self):
-        """Auto-detect day name based on date"""
-        return self.date.strftime('%A')
-
-    @classmethod
-    def get_total_holidays_in_year(cls, year=None):
-        """Count total public holidays in a specific year"""
-        if year is None:
-            from datetime import datetime
-            year = datetime.now().year
-        return cls.objects.filter(date__year=year).count()
-
-    @classmethod
-    def get_working_days_in_month(cls, year=None, month=None):
-        """Count total working days in a month (excluding Sundays and holidays)"""
-        from datetime import datetime, date
-        import calendar
-        
-        if year is None or month is None:
-            now = datetime.now()
-            year = year or now.year
-            month = month or now.month
-        
-        # Get all days in the month
-        _, days_in_month = calendar.monthrange(year, month)
-        
-        working_days = 0
-        holidays_in_month = set(
-            cls.objects.filter(
-                date__year=year, 
-                date__month=month
-            ).values_list('date', flat=True)
-        )
-        
-        for day in range(1, days_in_month + 1):
-            current_date = date(year, month, day)
-            # Skip Sundays (weekday 6) and holidays
-            if current_date.weekday() != 6 and current_date not in holidays_in_month:
-                working_days += 1
-        
-        return working_days
-
-
-class AppService(models.Model):
-    name = models.CharField(max_length=100, unique=True)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        indexes = [models.Index(fields=['name'])]
-        ordering = ['name']
-
-    def __str__(self):
-        return self.name
 

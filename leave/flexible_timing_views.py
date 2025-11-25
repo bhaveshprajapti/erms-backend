@@ -19,13 +19,13 @@ from .serializers import (
 
 class FlexibleTimingTypeViewSet(viewsets.ModelViewSet):
     """ViewSet for managing flexible timing types"""
-    queryset = FlexibleTimingType.objects.all().order_by('-created_at')
+    queryset = FlexibleTimingType.objects.filter(is_active=True)
     serializer_class = FlexibleTimingTypeSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        """Return all timing types (active and inactive) for admin management"""
-        return FlexibleTimingType.objects.all().order_by('-created_at')
+        """Filter active timing types"""
+        return FlexibleTimingType.objects.filter(is_active=True).order_by('name')
 
 
 class FlexibleTimingRequestViewSet(viewsets.ModelViewSet):
@@ -336,19 +336,19 @@ class FlexibleTimingBalanceViewSet(viewsets.ReadOnlyModelViewSet):
 
 class FlexibleTimingPolicyViewSet(viewsets.ModelViewSet):
     """ViewSet for managing flexible timing policies"""
-    queryset = FlexibleTimingPolicy.objects.filter(is_active=True).order_by('-created_at')
+    queryset = FlexibleTimingPolicy.objects.filter(is_active=True)
     serializer_class = FlexibleTimingPolicySerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         """Only staff can manage policies"""
         if self.request.user.is_staff:
-            return FlexibleTimingPolicy.objects.all().order_by('-created_at')
+            return FlexibleTimingPolicy.objects.all().order_by('name')
         else:
             # Regular users can only view applicable policies
             return FlexibleTimingPolicy.objects.filter(
                 is_active=True
-            ).order_by('-created_at')
+            ).order_by('name')
 
     def create(self, request, *args, **kwargs):
         """Only staff can create policies"""
