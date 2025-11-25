@@ -6,6 +6,7 @@ from accounts.models import User, Organization
 from common.models import StatusChoice
 from policies.models import LeaveType, FlexAllowanceType
 
+
 class Attendance(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     date = models.DateField()
@@ -21,6 +22,7 @@ class Attendance(models.Model):
     admin_reset_at = models.DateTimeField(null=True, blank=True)  # Track when admin reset the day
     admin_reset_count = models.PositiveIntegerField(default=0)  # Track number of resets per day
     created_at = models.DateTimeField(auto_now_add=True)
+    late_checkin = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('user', 'date')
@@ -222,3 +224,19 @@ class SessionLog(models.Model):
         
         return expired_count
 
+class UserAttendanceSetting(models.Model):
+    """
+    User-specific settings for attendance logic, allowing audit mode per user.
+    """
+    user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
+    is_audit_mode_active = models.BooleanField(
+        default=False,
+        help_text="If active, attendance status calculation is bypassed/simplified (e.g., always 'Present') for this specific user."
+    )
+
+    class Meta:
+        verbose_name = "User Attendance Setting"
+        verbose_name_plural = "User Attendance Settings"
+
+    def __str__(self):
+        return f"Settings for {self.user.username}: Audit Mode {'ON' if self.is_audit_mode_active else 'OFF'}"

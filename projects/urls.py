@@ -5,7 +5,7 @@ from .views import (
 )
 
 # indrajit start
-from .views import ProjectDetailViewSet,AmountPayableViewSet,AmountReceivedViewSet
+from .views import ProjectDetailViewSet,AmountPayableViewSet,AmountReceivedViewSet,HostDataViewSet,DomainViewSet
 # indrajit end
 
 router = DefaultRouter()
@@ -19,6 +19,8 @@ router.register(r'task-comments', TaskCommentViewSet)
 router.register(r'project-details',ProjectDetailViewSet)
 router.register(r'amounts-payable', AmountPayableViewSet)
 router.register(r'amounts-received', AmountReceivedViewSet)
+router.register(r'hosts', HostDataViewSet)
+router.register(r'domains', DomainViewSet)
 
 # indrajit end
 

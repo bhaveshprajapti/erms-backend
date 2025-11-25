@@ -68,7 +68,7 @@ class UserAdmin(BaseUserAdmin):
     ]
     list_filter = [
         'is_active', 'is_staff', 'is_superuser', 'organization', 'role',
-        'employee_type', 'joining_date', 'is_on_probation', 'is_on_notice_period'
+        'employee_type', 'joining_date', 'is_on_probation', 'is_on_notice_period','contract_start_date','contract_end_date'
     ]
     search_fields = [
         'employee_id', 'username', 'first_name', 'last_name', 'email', 'phone'
@@ -93,6 +93,11 @@ class UserAdmin(BaseUserAdmin):
                 'organization', 'role', 'employee_type', 'joining_date',
                 'termination_date', 'salary', 'designations', 'technologies', 'shifts'
             )
+        }),
+        ('Contract Details', { 
+            'fields': (
+                'contract_start_date', 'contract_end_date'
+            ),
         }),
         ('Status & Probation', {
             'fields': (
@@ -134,6 +139,10 @@ class UserAdmin(BaseUserAdmin):
         ('Employment Details', {
             'classes': ('wide',),
             'fields': ('organization', 'role', 'employee_type', 'joining_date'),
+        }),
+        ('Contract Details', { 
+            'classes': ('wide',),
+            'fields': ('contract_start_date', 'contract_end_date'),
         }),
     )
     

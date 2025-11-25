@@ -14,6 +14,8 @@ from .serializers import (
     ProfileUpdateRequestSerializer, ProfileUpdateRequestCreateSerializer,
     EmployeePaymentSerializer
 )
+from datetime import date
+import random
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.filter(deleted_at__isnull=True).order_by('-created_at')
@@ -90,6 +92,41 @@ class UserViewSet(viewsets.ModelViewSet):
         instance.is_active = False
         instance.save()
 
+    @action(detail=False,methods=['get'])
+    def today_birthday(self,request):
+        today = date.today()
+
+        birthday_user = User.objects.filter(
+            birth_date__isnull=False,
+            birth_date__month=today.month,
+            birth_date__day=today.day
+        )
+
+        BIRTHDAY_MESSAGES = [
+            "🎉 Wishing you a fantastic birthday!",
+            "🎂 Have an amazing birthday! Enjoy your day!",
+            "✨ May your birthday bring happiness and joy!",
+            "🥳 Happy Birthday! Stay blessed!",
+            "🎉 Cheers to your special day!",
+            "🌟 May your year be filled with success & smiles!",
+            "🎂 Warm wishes on your birthday!",
+            "🥳 Have a wonderful birthday celebration!"
+        ]
+
+
+        messages = [
+            f"{random.choice(BIRTHDAY_MESSAGES)} {user.first_name} {user.last_name}! 🎈" 
+            for user in birthday_user
+        ]
+
+        serializers = UserListSerializer(birthday_user, many=True)
+
+        return Response({
+            "count":birthday_user.count(),
+            "messages":messages,
+            "employees":serializers.data
+        })
+    
 class OrganizationViewSet(viewsets.ModelViewSet):
     queryset = Organization.objects.all().order_by('-created_at')
     serializer_class = OrganizationSerializer

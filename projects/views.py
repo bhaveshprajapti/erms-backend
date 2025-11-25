@@ -10,8 +10,8 @@ from .serializers import (
 )
 
 # indrajit start
-from .models import ProjectDetails,AmountPayable,AmountReceived
-from .serializers import ProjectDetailSerializer,AmountPayableSerializer,AmountReceivedSerializer
+from .models import ProjectDetails,AmountPayable,AmountReceived,HostData,Domain
+from .serializers import ProjectDetailSerializer,AmountPayableSerializer,AmountReceivedSerializer,HostDataSerializer,DomainSerializer
 from .utils import StandredResponse
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 from datetime import datetime
@@ -537,4 +537,11 @@ class AmountReceivedViewSet(StandredResponse, viewsets.ModelViewSet):
             message="Amount Received deleted successfully."
         )
 
+class HostDataViewSet(viewsets.ModelViewSet):
+    queryset = HostData.objects.all().order_by('server_name')
+    serializer_class = HostDataSerializer
+
+class DomainViewSet(viewsets.ModelViewSet):
+    queryset = Domain.objects.all().order_by('domain_name')
+    serializer_class = DomainSerializer 
 # indrajit end

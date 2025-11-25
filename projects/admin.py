@@ -6,7 +6,7 @@ from .models import Project, Task, TimeLog, TaskComment
 
 # indrajit start
 
-from .models import ProjectDetails,AmountPayable,AmountReceived
+from .models import ProjectDetails,AmountPayable,AmountReceived,HostData,Domain
 
 # indrajit end
 
@@ -232,5 +232,82 @@ class AmountReceivedAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('client')
+
+@admin.register(HostData)
+class HostDataAdmin(admin.ModelAdmin):
+    list_display = (
+        'server_name', 'hosting_provider', 'server_ip', 'status', 'expiry_date','server_cost'
+    )
+   
+    list_filter = (
+        'status', 'server_type', 'hosting_provider', 'backup_status','purchase_date',
+        'expiry_date'
+    )
+ 
+    search_fields = (
+        'server_name', 'server_ip', 'hosting_provider', 'username',
+        'notes'
+    )
+    
+    ordering = ('server_name', 'status')
+    
+    fieldsets = (
+        ('Server Identification', {
+            'fields': ('server_name', 'hosting_provider', 'server_type', 'server_ip', 'operating_system', 'status'),
+        }),
+        ('Plan & Billing', {
+            'fields': ('plan_package', 'server_cost', 'purchase_date', 'expiry_date'),
+        }),
+        ('Server/Panel Access', {
+            'classes': ('collapse',),
+            'fields': ('login_url', 'username', 'password', 'ssh_ftp_access', 'ssh_username', 'ssh_password'),
+        }),
+        ('Database Details', {
+            'classes': ('collapse',),
+            'fields': ('database_name', 'db_username', 'db_password'),
+        }),
+        ('Specifications & Info', {
+            'fields': ('memory', 'RAM', 'backup_status', 'linked_services', 'notes'),
+        }),
+    )
+
+@admin.register(Domain)
+class DomainAdmin(admin.ModelAdmin):
+    list_display = (
+        'domain_name', 'registrar', 'expiry_date', 'left_days', 'renewal_status','dns_configured','ssl_installed','payment_mode'
+    )
+    
+    list_filter = (
+        'renewal_status', 'registrar', 'dns_configured', 'ssl_installed','auto_renewal','payment_mode','client_payment_status'
+    )
+    
+    search_fields = (
+        'domain_name', 'registrar', 'notes', 'credentials_user'
+    )
+    
+    ordering = ('expiry_date', 'domain_name')
+    
+    fieldsets = (
+        ('Domain Basics', {
+            'fields': ('project', 'domain_name', 'sub_domain1', 'sub_domain2', 'registrar'),
+        }),
+        ('Renewal & Status', {
+            'fields': ('purchase_date', 'expiry_date', 'left_days', 'auto_renewal', 'renewal_status'),
+        }),
+        ('Technical Details', {
+            'classes': ('collapse',),
+            'fields': ('dns_configured', 'nameservers', 'ssl_installed', 'ssl_expiry', 'linked_services'),
+        }),
+        ('Access Credentials', {
+            'classes': ('collapse',),
+            'fields': ('credentials_user', 'credentials_pass'),
+        }),
+        ('Payment & Billing', {
+            'fields': ('domain_charge', 'payment_mode', 'client_payment_status', 'payment_method', 'payment_details'),
+        }),
+        ('Notes', {
+            'fields': ('notes',),
+        }),
+    )
 
 # indrajit end
