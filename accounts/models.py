@@ -72,6 +72,14 @@ class User(AbstractUser):
     employee_type = models.ForeignKey(EmployeeType, on_delete=models.SET_NULL, null=True, blank=True)
     joining_date = models.DateField(null=True, blank=True)
     termination_date = models.DateField(null=True, blank=True)
+    contract_start_date = models.DateField(
+        null=True, blank=True,
+        help_text="Start date of the employee's contract (used for time-bound access)."
+    )
+    contract_end_date = models.DateField(
+        null=True, blank=True,
+        help_text="End date of the employee's contract (used for time-bound access)."
+    )
     birth_date = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=10, null=True, blank=True)
     marital_status = models.CharField(max_length=10, null=True, blank=True)

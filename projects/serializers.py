@@ -7,7 +7,7 @@ from datetime import datetime
 
 # indrajit start
 
-from .models import ProjectDetails,AmountPayable,AmountReceived
+from .models import ProjectDetails,AmountPayable,AmountReceived,HostData,Domain
 from rest_framework.validators import UniqueTogetherValidator
 from accounts.models import User
 from django.apps import apps
@@ -208,4 +208,14 @@ class AmountReceivedSerializer(serializers.ModelSerializer):
              
         return data
 
+class HostDataSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HostData
+        fields = '__all__'
+
+class DomainSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Domain
+        fields = '__all__'
+  
 # indrajit end

@@ -4,16 +4,17 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.db.models import Q
 from django.utils import timezone
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta,date
 from zoneinfo import ZoneInfo
 from common.models import StatusChoice
 from common.timezone_utils import get_ist_time, get_ist_date, get_current_ist_date, format_time_12hour
-from .models import Attendance, LeaveRequest, TimeAdjustment, Approval, SessionLog
+from .models import Attendance, LeaveRequest, TimeAdjustment, Approval, SessionLog,UserAttendanceSetting
 from leave.models import FlexibleTimingRequest
 from .serializers import (
     AttendanceSerializer, LeaveRequestSerializer, 
     TimeAdjustmentSerializer, ApprovalSerializer
 )
+from rest_framework.exceptions import ValidationError
 
 # IST utilities moved to common.timezone_utils
 
@@ -346,6 +347,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         user = request.user
         now = timezone.now()  # Store UTC
         today = get_ist_date(now)  # Use IST date for business logic
+
+        audit_setting = UserAttendanceSetting.objects.filter(user=user).first()
+        is_audit_mode = audit_setting.is_audit_mode_active if audit_setting else False
         
         # CRITICAL: Check for expired sessions (with backward compatibility)
         try:
@@ -379,10 +383,35 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return Response({
                 'detail': leave_message
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        is_freelancer = False
+        is_contractor = False
+        if user.employee_type:
+            employee_type_name = user.employee_type.name.lower()
+            freelancer_patterns = ['freelancer', 'free lance','free-lance']
+            contractor_patterns = ['contractor', 'contractore']
+            is_freelancer = any(pattern in employee_type_name for pattern in freelancer_patterns)
+            is_contractor = any(pattern in employee_type_name for pattern in contractor_patterns)
+
+        # Contractor Date Range Validation 
+        if is_contractor:
+            contract_start = getattr(user, 'contract_start_date', None)
+            contract_end = getattr(user, 'contract_end_date', None)
+            
+            if not contract_start or not contract_end:
+                 return Response({
+                    'detail': 'Contract dates are missing for contractual employee. Contact admin.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            if not (contract_start <= today <= contract_end):
+                return Response({
+                    'detail': f'Check-in restricted. Your contract period is from {contract_start} to {contract_end}.'
+                }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get user shifts
         shifts = self._get_user_shifts(user)
-        if not shifts.exists():
+
+        if not is_freelancer and not shifts.exists() and not is_audit_mode:
             return Response({
                 'detail': 'No shift assigned. Contact admin.'
             }, status=status.HTTP_400_BAD_REQUEST)
@@ -399,40 +428,38 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         
         # Check if admin has reset the day TODAY and this is the first check-in after reset
         admin_reset_override = False
-        if (is_first_checkin and 
-            hasattr(attendance, 'admin_reset_at') and 
-            attendance.admin_reset_at is not None):
-            # Check if the reset was done today (same IST date)
-            reset_date = get_ist_date(attendance.admin_reset_at)
-            if reset_date == today:
+        reset_day = None
+        if attendance.admin_reset_at:
+            reset_day = get_ist_date(attendance.admin_reset_at)
+            if reset_day == today:
                 admin_reset_override = True
-        
         # Apply different validation based on check-in type
-        if is_first_checkin:
-            # First check-in of the day - apply strict shift validation unless admin reset
-            if not admin_reset_override:
+        if not is_audit_mode:  
+            if is_first_checkin and not is_freelancer and not admin_reset_override:
                 shift_result = self._is_within_shift_hours(now, shifts, check_in_grace=True)
                 within_shift = shift_result if isinstance(shift_result, bool) else shift_result[0]
-                is_half_day_checkin = isinstance(shift_result, tuple) and len(shift_result) > 1 and shift_result[1] == "half_day"
-                
                 has_flexible_timing, flexible_message = self._check_flexible_timing_status(user, today, now)
-                
+
                 if not within_shift and not has_flexible_timing:
-                    return Response({
-                        'detail': 'Check-in allowed 3 hours before shift start, up to 15 minutes after shift start only.'
-                    }, status=status.HTTP_400_BAD_REQUEST)
+                    # return Response({
+                    #     'detail': 'Check-in allowed 3 hours before shift start, up to 15 minutes after shift start only.'
+                    # }, """status=status.HTTP_400_BAD_REQUEST)"""
+                    attendance.late_checkin = True
+                    attendance.save()
             # If admin reset override is active, skip shift validation for first check-in
-        else:
+            else:
             # Subsequent check-in (after break) - more lenient validation
             # Just check if within reasonable hours (e.g., not in the middle of the night)
             # Use IST for validation
-            ist_now = get_ist_time(now)
-            current_hour = ist_now.hour
-            if current_hour < 6 or current_hour > 23:  # Between 6 AM and 11 PM IST
-                return Response({
-                    'detail': 'Check-in not allowed during night hours (11 PM - 6 AM IST).'
-                }, status=status.HTTP_400_BAD_REQUEST)
-        
+                ist_now = get_ist_time(now)
+                current_hour = ist_now.hour
+                if current_hour < 6 or current_hour > 23:  # Between 6 AM and 11 PM IST
+                    return Response({
+                        'detail': 'Check-in not allowed during night hours (11 PM - 6 AM IST).'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            print("AUDIT MODE ACTIVE → Skipping all shift validations")
+
         # Check if day has ended
         if hasattr(attendance, 'day_ended') and attendance.day_ended:
             return Response({
@@ -699,7 +726,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         attendance.day_end_time = now
         
         # Calculate day status based on working hours
-        day_status = self._calculate_day_status(attendance.total_hours, user)
+        day_status = self._calculate_day_status(attendance.total_hours, attendance.user)
         attendance.day_status = day_status
         
         attendance.save()
@@ -748,36 +775,64 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         
         # Convert to total seconds
         total_seconds = total_hours.total_seconds()
-        
-        # Check if employee is a half-day employee type
-        is_half_day_employee = False
-        if user and user.employee_type:
-            employee_type_name = user.employee_type.name.lower()
-            # Check for various combinations of "half day" in employee type
-            half_day_patterns = ['half day', 'halfday', 'half-day']
-            is_half_day_employee = any(pattern in employee_type_name for pattern in half_day_patterns)
-        
-        if is_half_day_employee:
-            # Special rules for half-day employees
-            # More than 1 hour = Present
-            if total_seconds >= 1 * 3600:  # 1 hour or more
+
+        audit_setting = UserAttendanceSetting.objects.filter(user=user).first()
+
+        if audit_setting and audit_setting.is_audit_mode_active:
+        # In audit mode → only count time worked, no half-day/full-day logic
+            if total_seconds > 0:
                 return 'Present'
-            # Less than 1 hour = Absent
             else:
                 return 'Absent'
-        else:
-            # Standard rules for full-time employees
-            # Less than 3.5 hours = Absent
-            if total_seconds < 3.5 * 3600:
-                return 'Absent'
-            
-            # 3.5 to 7.5 hours = Half Day
-            if 3.5 * 3600 <= total_seconds < 7.5 * 3600:
-                return 'Half Day'
-            
-            # 7.5 hours or more = Present
-            if total_seconds >= 7.5 * 3600:
+        
+        # start check in late 
+        today = timezone.now().date()
+
+        late_count = Attendance.objects.filter(
+            user=user,
+            date__year=today.year,
+            date__month=today.month,
+            late_checkin=True
+        ).count()
+
+        if late_count > 2:
+            if total_seconds >= 8 * 3600:
                 return 'Present'
+            elif total_seconds >= 4 * 3600:
+                return 'Half Day'
+            else:
+                return 'Absent'
+        
+        # if audit mode off
+        # Check if employee is a half-day employee type
+        is_half_day_employee = False
+        is_freelancer_employee = False 
+        if user and user.employee_type:
+            employee_type_name = user.employee_type.name.lower()
+            half_day_patterns = ['half day', 'halfday', 'half-day','part time', 'parttime', 'part-time']
+            is_half_day_employee = any(pattern in employee_type_name for pattern in half_day_patterns)
+
+            freelancer_patterns = ['freelancer', 'free lance','free-lance']
+            is_freelancer_employee = any(pattern in employee_type_name for pattern in freelancer_patterns)
+
+        if is_freelancer_employee:
+            return 'Present' if total_seconds > 0 else 'Absent' 
+        
+        if is_half_day_employee:
+            return 'Present' if total_seconds >= 4 * 3600 else 'Absent'
+        
+        # Standard rules for full-time employees
+        # Less than 4 hours = Absent
+        if total_seconds < 4 * 3600:
+            return 'Absent'
+            
+        # 3.5 to 7.5 hours = Half Day
+        if 4 * 3600 <= total_seconds < 8* 3600:
+            return 'Half Day'
+            
+        # 7 hours or more = Present
+        if total_seconds >= 8 * 3600:
+            return 'Present'
         
         return 'Absent'
 
@@ -806,6 +861,21 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'needs_intervention': False,
                     'reason': 'Future date'
                 })
+            
+            is_contractor = False
+            if user.employee_type:
+                contractor_patterns = ['contractor', 'contractore']
+                is_contractor = any(pattern in user.employee_type.name.lower() for pattern in contractor_patterns)
+
+            if is_contractor:
+                contract_start = getattr(user, 'contract_start_date', None)
+                contract_end = getattr(user, 'contract_end_date', None)
+                if contract_start and contract_end:
+                    if not (contract_start <= date <= contract_end):
+                        return Response({
+                            'needs_intervention': False,
+                            'reason': 'Date outside contractual employment range.'
+                        })
             
             # Get attendance record
             try:
@@ -841,11 +911,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             
             # Get user shifts
             shifts = self._get_user_shifts(user)
-            if not shifts.exists():
-                return Response({
-                    'needs_intervention': False,
-                    'reason': 'No shift assigned'
-                })
+            is_freelancer = False
+            if user.employee_type:
+                freelancer_patterns = ['freelancer', 'free lance','free-lance']
+                is_freelancer = any(pattern in user.employee_type.name.lower() for pattern in freelancer_patterns)
             
             # For today, check if user missed the check-in window
             if date == today:
@@ -934,10 +1003,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 
                 # Update sessions and recalculate total hours
                 attendance.sessions = sessions
-                attendance.total_hours = self._calculate_total_hours(sessions)
-                attendance.day_status = 'Present'  # Set to Present since user has completed sessions
+                attendance.day_status = self._calculate_day_status(
+                    attendance.total_hours,
+                    attendance.user
+                )  # Set to Present since user has completed sessions
             else:
                 # No sessions - user never checked in
+                attendance.total_hours = timedelta(0)
                 attendance.day_status = None
             
             attendance.save()
@@ -953,13 +1025,30 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 )
             except Exception as e:
                 print(f"Failed to log admin reset event: {e}")
+
+            shift_info = {}
+            try:
+                user_obj = attendance.user
+                shifts = user_obj.shifts.filter(is_active=True)
+                if shifts.exists():
+                    shift = shifts.first()
+                    shift_info = {
+                        "shift_name": shift.name,
+                        "shift_start": format_time_12hour(shift.start_time),
+                        "shift_end": format_time_12hour(shift.end_time)
+                    }
+                else:
+                    shift_info = {"detail": "No active shift assigned"}
+            except:
+                shift_info = {"detail": "Shift info unavailable"}
             
             return Response({
                 'message': 'Day status reset successfully. Employee can check in again.',
                 'date': date_str,
                 'user_id': user_id,
                 'reset_count': attendance.admin_reset_count,
-                'info': f'This day has been reset {attendance.admin_reset_count} time(s).' if attendance.admin_reset_count > 1 else 'First reset for this day.'
+                'info': f'This day has been reset {attendance.admin_reset_count} time(s).' if attendance.admin_reset_count > 1 else 'First reset for this day.',
+                'shift': shift_info
             })
             
         except Attendance.DoesNotExist:
@@ -976,6 +1065,18 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         today = get_current_ist_date()  # Use IST date for business logic
         is_today = date == today
         has_approved_leave = self._check_leave_status(user, date, timezone.now())[0]
+
+        if total_hours:
+            total_seconds = total_hours.total_seconds()
+        else:
+            total_seconds = 0
+
+        audit_setting = UserAttendanceSetting.objects.filter(user=user).first()
+
+        if audit_setting and audit_setting.is_audit_mode_active:
+            if total_seconds <= 0:
+                return 'Absent'
+            return 'Present'
         
         # If no sessions recorded
         if not sessions:
@@ -1004,6 +1105,22 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 minutes = int(time_parts[1]) if len(time_parts) > 1 else 0
                 seconds = float(time_parts[2]) if len(time_parts) > 2 else 0
                 total_seconds = hours * 3600 + minutes * 60 + seconds
+
+            late_count = Attendance.objects.filter(
+                user=user,
+                date__year=date.year,
+                date__month=date.month,
+                late_checkin=True
+            ).count()
+
+            if late_count > 2:
+
+                if total_seconds >= 7.5 * 3600:
+                    return 'Present'
+                elif total_seconds >= 3.5 * 3600:
+                    return 'Half Day'
+                else:
+                    return 'Absent'
             
             # Get user shifts to determine minimum working hours
             shifts = self._get_user_shifts(user)
@@ -1026,14 +1143,28 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             
             # Check if employee is a half-day employee type
             is_half_day_employee = False
+            is_freelancer_employee = False
             if user and user.employee_type:
                 employee_type_name = user.employee_type.name.lower()
                 # Check for various combinations of "half day" in employee type
                 half_day_patterns = ['half day', 'halfday', 'half-day', 'part time', 'parttime', 'part-time']
                 is_half_day_employee = any(pattern in employee_type_name for pattern in half_day_patterns)
+
+                freelancer_patterns = ['freelancer', 'free lance','free-lance']
+                is_freelancer_employee = any(pattern in employee_type_name for pattern in freelancer_patterns)
             
             # Determine status based on working hours and employee type
-            if is_half_day_employee:
+            if is_freelancer_employee: 
+                if total_seconds > 0:
+                    if has_approved_leave:
+                        return 'Present (Despite Leave)'
+                    return 'Present'
+                else:
+                    if has_approved_leave:
+                        return 'On Leave'
+                    return 'Absent'
+                
+            elif is_half_day_employee:
                 # Special rules for half-day employees
                 if total_seconds >= 3 * 3600:  # 3 hour or more
                     if has_approved_leave:
@@ -1440,6 +1571,22 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             'shift_name': shift.name
         })
 
+    def _is_audit_mode_active(self,user):
+        """Check if audit mode is active for the specific user."""
+        try:
+            settings = UserAttendanceSetting.objects.get(user=user)
+            return settings.is_audit_mode_active
+        except UserAttendanceSetting.DoesNotExist:
+            return False # Default to normal mode if no setting found
+        
+    def _get_monthly_late_count(self, user, today):
+        """how many late check-ins user already has in this months"""
+        return Attendance.objects.filter(
+            user=user,
+            date_year=today.year,
+            date_month=today.month,
+            late_checkin = True
+        ).count()
 
 class LeaveRequestViewSet(viewsets.ModelViewSet):
     queryset = LeaveRequest.objects.all().order_by('-created_at')
@@ -1476,6 +1623,29 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
                 | Q(leave_type__name__icontains=search)
             )
         return queryset.order_by('-created_at')
+    
+    def perform_create(self, serializer):
+        start_date = serializer.validated_data.get('start_date')
+        end_date = serializer.validated_data.get('end_date')
+
+        today = date.today()
+
+        if start_date < today:
+            raise ValidationError({
+                'start_date': 'You cannot apply leave for past dates.'
+            })
+        
+        if end_date < today:
+            raise ValidationError({
+                'end_date': 'End date cannot be in the past.'
+            })
+        
+        if end_date < start_date:
+            raise ValidationError({
+                'end_date': 'End date cannot be before start date.'
+            })
+        
+        serializer.save(user=self.request.user)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def approve(self, request, pk=None):

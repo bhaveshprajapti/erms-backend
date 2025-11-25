@@ -1,17 +1,17 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from .models import Attendance, LeaveRequest, TimeAdjustment, Approval, SessionLog
+from .models import Attendance, LeaveRequest, TimeAdjustment, Approval, SessionLog,UserAttendanceSetting
 
 
 @admin.register(Attendance)
 class AttendanceAdmin(admin.ModelAdmin):
     list_display = [
         'user', 'date', 'total_hours_display', 'day_status_display',
-        'day_ended', 'sessions_count', 'admin_reset_count', 'created_at'
+        'late_checkin_display','day_ended', 'sessions_count', 'admin_reset_count', 'created_at'
     ]
     list_filter = [
-        'day_ended', 'day_status', 'date', 'created_at', 'admin_reset_count'
+        'day_ended', 'day_status','late_checkin', 'date', 'created_at', 'admin_reset_count'
     ]
     search_fields = ['user__username', 'user__email', 'notes']
     readonly_fields = [
@@ -92,6 +92,12 @@ class AttendanceAdmin(admin.ModelAdmin):
             )
         return format_html('<span style="color: gray;">-</span>')
     day_status_display.short_description = 'Status'
+
+    def late_checkin_display(self, obj):
+        if getattr(obj, 'late_checkin', False):
+            return format_html('<span style="color: red; font-weight: bold;">Late</span>')
+        return format_html('<span style="color: green;">On Time</span>')
+    late_checkin_display.short_description = 'Late?'
     
     def sessions_display(self, obj):
         if obj.sessions:
@@ -240,5 +246,37 @@ class SessionLogAdmin(admin.ModelAdmin):
         }),
     )
     
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user')
+    
+
+
+@admin.action(description='Activate Audit Mode for selected users')
+def activate_audit_mode(modeladmin, request, queryset):
+    """Bulk action to set is_audit_mode_active to True"""
+    updated_count = queryset.update(is_audit_mode_active=True)
+    modeladmin.message_user(
+        request,
+        f'{updated_count} users successfully set to Audit Mode Active.', 
+        level='success'
+    )
+
+@admin.action(description='Deactivate Audit Mode for selected users')
+def deactivate_audit_mode(modeladmin, request, queryset):
+    """Bulk action to set is_audit_mode_active to False"""
+    updated_count = queryset.update(is_audit_mode_active=False)
+    modeladmin.message_user(
+        request, 
+        f'{updated_count} users successfully set to Audit Mode Inactive.', 
+        level='success'
+    )
+
+@admin.register(UserAttendanceSetting)
+class UserAttendanceSettingAdmin(admin.ModelAdmin):
+    list_display = ['user','is_audit_mode_active']
+    list_filter = ['is_audit_mode_active']
+    search_fields = ['user__username','user__firstname', 'user__lastname']
+    actions = [activate_audit_mode, deactivate_audit_mode]
+
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('user')

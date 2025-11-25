@@ -334,5 +334,100 @@ class AmountReceived(models.Model):
     def __str__(self):
         client_name = self.client.name if self.client else (self.manual_client_name or 'N/A')
         return f"{self.title} - {self.amount} from Client: {self.client.name if self.client else 'N/A'}"
+
+class HostData(models.Model):
+    HOST_STATUS_CHOICES = [
+        ('Active', 'Active'),
+        ('Inactive', 'Inactive'),
+        ('Expired', 'Expired'),
+    ]
+
+    hosting_provider = models.CharField(max_length=255, blank=True, null=True)
+    server_name = models.CharField(max_length=255, blank=True, null=True)  
+    server_type = models.CharField(max_length=50, blank=True, null=True)
+    plan_package = models.CharField(max_length=100, blank=True, null=True)
+    server_ip = models.GenericIPAddressField(blank=True, null=True, unique=True)
+    operating_system = models.CharField(max_length=100, blank=True, null=True)  
+    login_url = models.CharField(max_length=255,blank=True, null=True)
+    username = models.CharField(max_length=100, blank=True, null=True)
+    password = models.CharField(max_length=255, blank=True, null=True)
+    ssh_username = models.CharField(max_length=100, blank=True, null=True)
+    ssh_password = models.CharField(max_length=100, blank=True, null=True)
+    ssh_ftp_access = models.CharField(max_length=50, blank=True, null=True)
+    database_name = models.CharField(max_length=100, blank=True, null=True)
+    db_username = models.CharField(max_length=100, blank=True, null=True)
+    db_password = models.CharField(max_length=255, blank=True, null=True)
+    purchase_date = models.DateField(blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
+    server_cost = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    memory = models.CharField(max_length=50, blank=True, null=True)  
+    RAM = models.CharField(max_length=50, blank=True, null=True)  
+    backup_status = models.CharField(max_length=50, blank=True, null=True)  
+    linked_services = models.TextField(blank=True, null=True)  
+    status = models.CharField(max_length=20, choices=HOST_STATUS_CHOICES, blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class Domain(models.Model):
+    PAYMENT_METHOD_CHOICES = [
+        ('Bank Transfer', 'Bank Transfer'),
+        ('UPI', 'UPI'),
+        ('Cash', 'Cash'),
+        ('Cheque', 'Cheque'),
+        ('Other', 'Other'),
+    ]
+
+    PAYMENT_MODE_CHOICES = [
+        ('None', 'None'),
+        ('Client', 'Client'),
+        ('Company', 'Company'),
+    ]
+
+    AUTO_RENEWAL_CHOICES = [
+        ('On','On'),
+        ('Off','Off')
+    ]
+    project = models.ManyToManyField(Project, related_name='domains',blank=True)
+    domain_name = models.CharField(max_length=255, blank=True, null=True)
     
+    sub_domain1 = models.CharField(max_length=255, blank=True, null=True)
+    sub_domain2 = models.CharField(max_length=255, blank=True, null=True)
+
+    purchase_date = models.DateField(blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
+    left_days = models.PositiveIntegerField(blank=True, null=True)
+    auto_renewal = models.CharField(max_length=50, choices=AUTO_RENEWAL_CHOICES, blank=True, null=True)
+
+    registrar = models.CharField(max_length=255, blank=True, null=True)
+    renewal_status = models.CharField(max_length=50, blank=True, null=True)
+    
+    dns_configured = models.BooleanField(default=False)
+    nameservers = models.TextField(blank=True, null=True)
+
+    ssl_installed = models.BooleanField(default=False)
+    ssl_expiry = models.DateField(blank=True, null=True)
+    
+    credentials_user = models.CharField(max_length=255, blank=True, null=True)
+    credentials_pass = models.CharField(max_length=255, blank=True, null=True)
+    
+    linked_services = models.TextField(blank=True, null=True)
+    
+    # Payment-related
+    domain_charge = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, help_text="Charge in INR")
+    client_payment_status = models.CharField(
+        max_length=20,
+        choices=[("None", "None"),("Received", "Received"), ("Pending", "Pending")],
+        blank=True,
+    )
+    payment_method = models.CharField(max_length=50, choices=PAYMENT_METHOD_CHOICES, blank=True, null=True)
+    payment_mode = models.CharField(max_length=20, choices=PAYMENT_MODE_CHOICES,blank=True )
+    payment_details = models.JSONField(blank=True, null=True)
+
+    notes = models.TextField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
 # indrajit end
