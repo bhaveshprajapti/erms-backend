@@ -3,6 +3,6 @@ from .models import AuditLog
 from .serializers import AuditLogSerializer
 
 class AuditLogViewSet(viewsets.ModelViewSet):
-    queryset = AuditLog.objects.all().order_by('-created_at')
+    queryset = AuditLog.objects.all()
     serializer_class = AuditLogSerializer
 

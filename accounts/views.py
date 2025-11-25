@@ -7,16 +7,15 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.authtoken.models import Token
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User, Organization, Role, Permission, Module, ProfileUpdateRequest, EmployeePayment
+from .models import User, Organization, Role, Permission, Module, ProfileUpdateRequest
 from .serializers import (
     UserListSerializer, UserDetailSerializer, OrganizationSerializer, 
     RoleSerializer, PermissionSerializer, ModuleSerializer,
-    ProfileUpdateRequestSerializer, ProfileUpdateRequestCreateSerializer,
-    EmployeePaymentSerializer
+    ProfileUpdateRequestSerializer, ProfileUpdateRequestCreateSerializer
 )
 
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.filter(deleted_at__isnull=True).order_by('-created_at')
+    queryset = User.objects.filter(deleted_at__isnull=True)
     permission_classes = [IsAuthenticated]
     
     def get_serializer_class(self):
@@ -59,18 +58,6 @@ class UserViewSet(viewsets.ModelViewSet):
         """Return the authenticated user's data."""
         serializer = UserDetailSerializer(request.user)
         return Response(serializer.data)
-    
-    def retrieve(self, request, *args, **kwargs):
-        """Override retrieve to include plain_password for admin users."""
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        data = serializer.data
-        
-        # Include plain_password only for admin users
-        if request.user.is_staff or request.user.is_superuser:
-            data['plain_password'] = instance.plain_password
-        
-        return Response(data)
 
     def perform_destroy(self, instance):
         """Soft delete the user instead of hard delete"""
@@ -91,53 +78,20 @@ class UserViewSet(viewsets.ModelViewSet):
         instance.save()
 
 class OrganizationViewSet(viewsets.ModelViewSet):
-    queryset = Organization.objects.all().order_by('-created_at')
+    queryset = Organization.objects.all()
     serializer_class = OrganizationSerializer
 
 class RoleViewSet(viewsets.ModelViewSet):
-    queryset = Role.objects.all().order_by('-created_at')
+    queryset = Role.objects.all()
     serializer_class = RoleSerializer
 
 class PermissionViewSet(viewsets.ModelViewSet):
-    queryset = Permission.objects.all().order_by('-created_at')
+    queryset = Permission.objects.all()
     serializer_class = PermissionSerializer
 
 class ModuleViewSet(viewsets.ModelViewSet):
-    queryset = Module.objects.all().order_by('-created_at')
+    queryset = Module.objects.all()
     serializer_class = ModuleSerializer
-
-
-class EmployeePaymentViewSet(viewsets.ModelViewSet):
-    serializer_class = EmployeePaymentSerializer
-    permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        queryset = EmployeePayment.objects.all().order_by('-date', '-created_at')
-        
-        # Filter by employee if provided
-        employee_id = self.request.query_params.get('employee')
-        if employee_id:
-            queryset = queryset.filter(employee_id=employee_id)
-        
-        # Filter by payment type if provided
-        payment_type = self.request.query_params.get('payment_type')
-        if payment_type:
-            queryset = queryset.filter(payment_type=payment_type)
-        
-        return queryset
-    
-    def perform_create(self, serializer):
-        # Ensure the employee exists
-        employee_id = self.request.data.get('employee_id')
-        if not employee_id:
-            raise serializers.ValidationError({'employee_id': 'Employee ID is required'})
-        
-        try:
-            employee = User.objects.get(id=employee_id)
-        except User.DoesNotExist:
-            raise serializers.ValidationError({'employee_id': 'Employee not found'})
-        
-        serializer.save(employee=employee)
 
 
 class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
@@ -153,10 +107,10 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
         
         # If user is admin/staff, show all requests
         if user.is_superuser or user.is_staff:
-            return ProfileUpdateRequest.objects.all().order_by('-requested_at')
+            return ProfileUpdateRequest.objects.all()
         
         # Regular employees can only see their own requests
-        return ProfileUpdateRequest.objects.filter(user=user).order_by('-requested_at')
+        return ProfileUpdateRequest.objects.filter(user=user)
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def approve(self, request, pk=None):
@@ -175,66 +129,22 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
             field_name = update_request.field_name
             new_value = update_request.new_value
             
-            # Handle multiple fields update (consolidated request)
-            if field_name == 'multiple_fields':
-                # Parse the new_value to extract individual field changes
-                # Format: "field name: old → new, field2: old → new"
-                import re
-                changes = new_value.split(', ')
-                
-                for change in changes:
-                    # Extract field name and new value - allow spaces in field names
-                    match = re.match(r'([^:]+):\s*"([^"]*?)"\s*→\s*"([^"]*?)"', change)
-                    if match:
-                        field = match.group(1).strip()
-                        new_val = match.group(3)
-                        
-                        # Convert field name with spaces to underscore format
-                        field = field.replace(' ', '_')
-                        
-                        # Apply the change
-                        if field in ['current_address', 'permanent_address']:
-                            from common.models import Address
-                            # Update existing address or create new one
-                            existing_address = getattr(user, field, None)
-                            if existing_address:
-                                existing_address.line1 = new_val
-                                existing_address.save()
-                            else:
-                                address = Address.objects.create(
-                                    line1=new_val,
-                                    city='N/A',
-                                    pincode='000000',
-                                    type='current' if field == 'current_address' else 'permanent'
-                                )
-                                setattr(user, field, address)
-                        else:
-                            # Handle regular fields
-                            setattr(user, field, new_val)
-                
-                user.save()
+            # Handle different field types
+            if field_name in ['current_address', 'permanent_address']:
+                # Handle address fields - create new Address object
+                from common.models import Address
+                address = Address.objects.create(
+                    line1=new_value,
+                    city='N/A',  # Default value
+                    pincode='000000',  # Default value
+                    type='current' if field_name == 'current_address' else 'permanent'
+                )
+                setattr(user, field_name, address)
             else:
-                # Handle single field update (backward compatibility)
-                if field_name in ['current_address', 'permanent_address']:
-                    # Handle address fields - create or update Address object
-                    from common.models import Address
-                    existing_address = getattr(user, field_name, None)
-                    if existing_address:
-                        existing_address.line1 = new_value
-                        existing_address.save()
-                    else:
-                        address = Address.objects.create(
-                            line1=new_value,
-                            city='N/A',  # Default value
-                            pincode='000000',  # Default value
-                            type='current' if field_name == 'current_address' else 'permanent'
-                        )
-                        setattr(user, field_name, address)
-                else:
-                    # Handle regular fields
-                    setattr(user, field_name, new_value)
-                
-                user.save()
+                # Handle regular fields
+                setattr(user, field_name, new_value)
+            
+            user.save()
             
             # Update request status
             update_request.status = 'approved'
@@ -284,141 +194,16 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
         if not (request.user.is_superuser or request.user.is_staff):
             return Response({'error': 'Permission denied'}, status=403)
         
-        pending_requests = ProfileUpdateRequest.objects.filter(status='pending').order_by('-requested_at')
+        pending_requests = ProfileUpdateRequest.objects.filter(status='pending')
         serializer = self.get_serializer(pending_requests, many=True)
         return Response(serializer.data)
     
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def my_requests(self, request):
         """Get current user's profile update requests"""
-        user_requests = ProfileUpdateRequest.objects.filter(user=request.user).order_by('-requested_at')
+        user_requests = ProfileUpdateRequest.objects.filter(user=request.user)
         serializer = self.get_serializer(user_requests, many=True)
         return Response(serializer.data)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def custom_logout(request):
-    """
-    Custom logout view that blacklists tokens and logs the logout event.
-    """
-    user = request.user
-    
-    try:
-        # Blacklist the refresh token if provided
-        refresh_token = request.data.get('refresh_token')
-        if refresh_token:
-            from rest_framework_simplejwt.tokens import RefreshToken
-            token = RefreshToken(refresh_token)
-            token.blacklist()
-        
-        # Log the logout event (with backward compatibility)
-        try:
-            from attendance.models import SessionLog
-            SessionLog.log_event(
-                user=user,
-                event_type='logout',
-                request=request,
-                notes='User initiated logout - token blacklisted'
-            )
-        except Exception as e:
-            # SessionLog table might not exist yet - continue without session logging
-            print(f"Session logging not available: {e}")
-        
-        return Response({
-            'message': 'Logout successful. Please clear your browser cache if you experience any issues.'
-        }, status=status.HTTP_200_OK)
-        
-    except Exception as e:
-        # Even if blacklisting fails, allow logout to proceed
-        print(f"Token blacklisting failed: {e}")
-        
-        return Response({
-            'message': 'Logout completed.'
-        }, status=status.HTTP_200_OK)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def token_refresh(request):
-    """
-    Custom token refresh endpoint with enhanced error handling
-    """
-    from rest_framework_simplejwt.tokens import RefreshToken
-    from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
-    
-    refresh_token = request.data.get('refresh')
-    
-    if not refresh_token:
-        return Response({
-            'error': 'Refresh token is required.',
-            'details': 'Please provide a valid refresh token.'
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    try:
-        # Validate and refresh the token
-        refresh = RefreshToken(refresh_token)
-        
-        # Get the user from the token
-        user_id = refresh.payload.get('user_id')
-        if not user_id:
-            return Response({
-                'error': 'Invalid token.',
-                'details': 'Token does not contain valid user information.'
-            }, status=status.HTTP_401_UNAUTHORIZED)
-        
-        # Validate user exists and is active
-        try:
-            user_obj = User.objects.get(
-                id=user_id, 
-                deleted_at__isnull=True, 
-                is_active=True
-            )
-        except User.DoesNotExist:
-            return Response({
-                'error': 'User not found.',
-                'details': 'The user associated with this token no longer exists or is inactive.'
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        # Check if user's organization is still active
-        if user_obj.organization and not user_obj.organization.is_active:
-            return Response({
-                'error': 'Organization is inactive.',
-                'details': 'Your organization account has been suspended.'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        # Generate new access token
-        access_token = refresh.access_token
-        
-        # Always rotate refresh token for enhanced security
-        new_refresh = RefreshToken.for_user(user_obj)
-        
-        # Update user's last login time
-        user_obj.last_login = timezone.now()
-        user_obj.save(update_fields=['last_login'])
-        
-        return Response({
-            'access': str(access_token),
-            'refresh': str(new_refresh),
-            'expires_in': 28800,  # 8 hours in seconds
-            'token_type': 'Bearer'
-        }, status=status.HTTP_200_OK)
-        
-    except TokenError as e:
-        return Response({
-            'error': 'Invalid or expired refresh token.',
-            'details': 'Your session has expired. Please login again.'
-        }, status=status.HTTP_401_UNAUTHORIZED)
-    except User.DoesNotExist:
-        return Response({
-            'error': 'User not found.',
-            'details': 'The user associated with this token no longer exists.'
-        }, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({
-            'error': 'Token refresh failed.',
-            'details': 'An error occurred while refreshing your session. Please login again.'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
@@ -481,19 +266,6 @@ def custom_login(request):
     refresh = RefreshToken.for_user(authenticated_user)
     access_token = refresh.access_token
     
-    # CRITICAL: Log the login event for session management and security (with backward compatibility)
-    try:
-        from attendance.models import SessionLog
-        SessionLog.log_event(
-            user=authenticated_user,
-            event_type='login',
-            request=request,
-            notes=f'Successful login from {request.META.get("HTTP_USER_AGENT", "Unknown")[:100]}'
-        )
-    except Exception as e:
-        # SessionLog table might not exist yet - continue without session logging
-        print(f"Session logging not available: {e}")
-    
     # Prepare user data
     user_data = {
         'id': authenticated_user.id,
@@ -517,16 +289,10 @@ def custom_login(request):
         'profile_picture': authenticated_user.profile_picture.url if authenticated_user.profile_picture else None,
     }
     
-    # Update user's last login time
-    authenticated_user.last_login = timezone.now()
-    authenticated_user.save(update_fields=['last_login'])
-    
     return Response({
         'access': str(access_token),
         'refresh': str(refresh),
         'message': 'Login successful.',
-        'user': user_data,
-        'expires_in': 28800,  # 8 hours in seconds
-        'token_type': 'Bearer'
+        'user': user_data
     }, status=status.HTTP_200_OK)
 

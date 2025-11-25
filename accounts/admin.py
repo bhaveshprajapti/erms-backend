@@ -1,169 +1,189 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
-from django.urls import reverse
-from django.utils.safestring import mark_safe
-from .models import User, Organization, Module, Permission, Role, ProfileUpdateRequest
+from .models import User, Organization, Role, Permission, Module
+from .forms import CustomUserCreationForm, CustomUserChangeForm
 
 
-@admin.register(Organization)
-class OrganizationAdmin(admin.ModelAdmin):
-    list_display = ['name', 'short_name', 'industry', 'is_active', 'created_at']
-    list_filter = ['is_active', 'industry', 'created_at']
-    search_fields = ['name', 'short_name', 'industry']
-    readonly_fields = ['created_at', 'updated_at']
-    
-    fieldsets = (
-        ('Organization Details', {
-            'fields': ('name', 'short_name', 'industry', 'is_active')
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at', 'deleted_at'),
-            'classes': ('collapse',)
-        }),
-    )
-
-
-@admin.register(Module)
-class ModuleAdmin(admin.ModelAdmin):
-    list_display = ['name', 'display_name', 'is_active', 'created_at']
-    list_filter = ['is_active', 'created_at']
-    search_fields = ['name', 'display_name']
-    readonly_fields = ['created_at']
-
-
-@admin.register(Permission)
-class PermissionAdmin(admin.ModelAdmin):
-    list_display = ['codename', 'name', 'module', 'is_active', 'created_at']
-    list_filter = ['is_active', 'module', 'created_at']
-    search_fields = ['codename', 'name', 'module__name']
-    readonly_fields = ['created_at']
-    
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related('module')
-
-
-@admin.register(Role)
-class RoleAdmin(admin.ModelAdmin):
-    list_display = ['name', 'display_name', 'permissions_count', 'is_active', 'created_at']
-    list_filter = ['is_active', 'created_at']
-    search_fields = ['name', 'display_name']
-    filter_horizontal = ['permissions']
-    readonly_fields = ['created_at']
-    
-    def permissions_count(self, obj):
-        count = obj.permissions.count()
-        return format_html(
-            '<span style="color: blue; font-weight: bold;">{}</span>',
-            count
-        )
-    permissions_count.short_description = 'Permissions'
-
-
-@admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = [
-        'employee_id', 'username', 'first_name', 'last_name', 'email',
-        'organization', 'role', 'employee_type', 'is_active', 'joining_date'
-    ]
-    list_filter = [
-        'is_active', 'is_staff', 'is_superuser', 'organization', 'role',
-        'employee_type', 'joining_date', 'is_on_probation', 'is_on_notice_period'
-    ]
-    search_fields = [
-        'employee_id', 'username', 'first_name', 'last_name', 'email', 'phone'
-    ]
-    readonly_fields = [
-        'employee_id', 'date_joined', 'last_login', 'created_at', 'updated_at'
-    ]
-    filter_horizontal = ['shifts', 'designations', 'technologies', 'groups', 'user_permissions']
+    # Use custom forms
+    form = CustomUserChangeForm
+    add_form = CustomUserCreationForm
     
+    # Fields to display in the admin list view
+    list_display = ('username', 'email', 'first_name', 'last_name', 'role', 'employee_type', 'is_active', 'probation_status', 'notice_status', 'folder_status')
+    list_filter = ('is_active', 'is_staff', 'role', 'employee_type', 'joining_date', 'is_on_probation', 'is_on_notice_period')
+    search_fields = ('username', 'first_name', 'last_name', 'email')
+    
+    # Fields for the admin form
     fieldsets = (
-        ('Authentication', {
-            'fields': ('employee_id', 'username', 'password', 'plain_password')
+        (None, {'fields': ('username', 'password')}),
+        ('Personal info', {
+            'fields': ('first_name', 'last_name', 'email', 'phone', 'birth_date', 'gender', 'marital_status')
         }),
-        ('Personal Information', {
-            'fields': (
-                'first_name', 'last_name', 'email', 'phone', 'profile_picture',
-                'birth_date', 'gender', 'marital_status'
-            )
+        ('Employment info', {
+            'fields': ('organization', 'role', 'employee_type', 'joining_date', 'termination_date', 'salary')
         }),
-        ('Employment Details', {
-            'fields': (
-                'organization', 'role', 'employee_type', 'joining_date',
-                'termination_date', 'salary', 'designations', 'technologies', 'shifts'
-            )
+        ('Employment Status', {
+            'fields': ('is_on_probation', 'probation_months', 'is_on_notice_period', 'notice_period_end_date'),
+            'classes': ('collapse',),
+            'description': 'Manage probation and notice period status'
         }),
-        ('Status & Probation', {
-            'fields': (
-                'is_on_probation', 'probation_months', 'is_on_notice_period',
-                'notice_period_end_date'
-            )
-        }),
-        ('Emergency Contact', {
-            'fields': ('emergency_contact', 'emergency_phone'),
+        ('Relationships', {
+            'fields': ('designations', 'shifts', 'technologies'),
             'classes': ('collapse',)
         }),
-        ('Address Information', {
-            'fields': ('current_address', 'permanent_address'),
+        ('Contact info', {
+            'fields': ('emergency_contact', 'emergency_phone', 'current_address', 'permanent_address'),
             'classes': ('collapse',)
         }),
         ('File Management', {
-            'fields': ('folder_path', 'employee_folder'),
-            'classes': ('collapse',)
+            'fields': ('profile_picture', 'folder_path', 'create_employee_folder'),
+            'classes': ('collapse',),
+            'description': 'Manage employee files and folder creation'
         }),
         ('Permissions', {
             'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions'),
             'classes': ('collapse',)
         }),
-        ('Additional Data', {
-            'fields': ('employee_details',),
-            'classes': ('collapse',)
-        }),
-        ('Timestamps', {
-            'fields': ('date_joined', 'last_login', 'created_at', 'updated_at', 'deleted_at'),
+        ('Important dates', {
+            'fields': ('last_login', 'date_joined', 'created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
     
+    # Fields for adding a new user
     add_fieldsets = (
-        ('Required Information', {
+        (None, {
             'classes': ('wide',),
-            'fields': ('username', 'first_name', 'last_name', 'email', 'password1', 'password2'),
+            'fields': ('username', 'email', 'password1', 'password2'),
         }),
-        ('Employment Details', {
+        ('Personal info', {
             'classes': ('wide',),
-            'fields': ('organization', 'role', 'employee_type', 'joining_date'),
+            'fields': ('first_name', 'last_name', 'phone')
+        }),
+        ('Employment info', {
+            'classes': ('wide',),
+            'fields': ('organization', 'role', 'employee_type', 'joining_date', 'salary')
+        }),
+        ('Employment Status', {
+            'classes': ('wide',),
+            'fields': ('is_on_probation', 'probation_months'),
+            'description': 'Set probation status for new employees'
+        }),
+        ('File Management', {
+            'classes': ('wide',),
+            'fields': ('create_employee_folder',),
+            'description': 'Check this to create a dedicated folder structure for this employee'
         }),
     )
     
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'organization', 'role', 'employee_type', 'current_address', 'permanent_address'
-        ).prefetch_related('designations', 'technologies', 'shifts')
+    readonly_fields = ('folder_path', 'created_at', 'updated_at', 'last_login', 'date_joined')
+    
+    def probation_status(self, obj):
+        """Display probation status"""
+        if obj.is_on_probation:
+            months = obj.probation_months or 'N/A'
+            return format_html('<span style="color: orange;">On Probation ({} months)</span>', months)
+        return format_html('<span style="color: green;">Regular</span>')
+    probation_status.short_description = 'Probation Status'
+    
+    def notice_status(self, obj):
+        """Display notice period status"""
+        if obj.is_on_notice_period:
+            end_date = obj.notice_period_end_date.strftime('%Y-%m-%d') if obj.notice_period_end_date else 'N/A'
+            return format_html('<span style="color: red;">On Notice (ends: {})</span>', end_date)
+        return format_html('<span style="color: green;">Active</span>')
+    notice_status.short_description = 'Notice Status'
+    
+    def folder_status(self, obj):
+        """Display folder creation status"""
+        if obj.folder_path:
+            return format_html('<span style="color: green;">✓ Created</span>')
+        return format_html('<span style="color: gray;">Not created</span>')
+    folder_status.short_description = 'Folder Status'
+    
+    def create_employee_folder(self, obj):
+        """Custom field for folder creation checkbox"""
+        return False
+    create_employee_folder.boolean = True
+    create_employee_folder.short_description = 'Create Employee Folder'
+    
+    def save_model(self, request, obj, form, change):
+        """Override save to handle folder creation"""
+        # Check if this is a new object or if folder creation was requested
+        create_folder = getattr(form, 'create_folder_requested', False)
+        
+        # Save the object first
+        super().save_model(request, obj, form, change)
+        
+        # Handle folder creation if requested and not already created
+        if create_folder and not obj.folder_path:
+            self._create_employee_folder(obj)
+    
+    def _create_employee_folder(self, instance):
+        """Create folder structure for employee"""
+        import os
+        from django.conf import settings
+        
+        folder_name = f"{instance.first_name}_{instance.last_name}_{instance.id}"
+        folder_path = os.path.join('employee_folders', folder_name)
+        full_folder_path = os.path.join(settings.MEDIA_ROOT, folder_path)
+        
+        try:
+            # Create main employee folder
+            os.makedirs(full_folder_path, exist_ok=True)
+            
+            # Create subfolders for organization
+            subfolders = ['documents', 'images', 'contracts', 'certificates']
+            for subfolder in subfolders:
+                subfolder_path = os.path.join(full_folder_path, subfolder)
+                os.makedirs(subfolder_path, exist_ok=True)
+            
+            instance.folder_path = folder_path
+            instance.save(update_fields=['folder_path'])
+            
+            self.message_user(
+                None, 
+                f"Successfully created folder structure for {instance.username} at {folder_path}",
+                level='SUCCESS'
+            )
+        except Exception as e:
+            self.message_user(
+                None,
+                f"Failed to create folder for {instance.username}: {e}",
+                level='ERROR'
+            )
 
 
-@admin.register(ProfileUpdateRequest)
-class ProfileUpdateRequestAdmin(admin.ModelAdmin):
-    list_display = [
-        'user', 'field_name', 'status', 'requested_at', 'processed_at', 'approved_by'
-    ]
-    list_filter = ['status', 'requested_at', 'processed_at', 'field_name']
-    search_fields = ['user__username', 'user__email', 'field_name', 'reason']
-    readonly_fields = ['requested_at', 'processed_at']
-    
-    fieldsets = (
-        ('Request Information', {
-            'fields': ('user', 'field_name', 'old_value', 'new_value', 'reason')
-        }),
-        ('Status & Approval', {
-            'fields': ('status', 'admin_comment', 'approved_by')
-        }),
-        ('Timestamps', {
-            'fields': ('requested_at', 'processed_at'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related('user', 'approved_by')
+class OrganizationAdmin(admin.ModelAdmin):
+    list_display = ('name', 'short_name', 'industry', 'is_active', 'created_at')
+    list_filter = ('is_active', 'industry')
+    search_fields = ('name', 'short_name')
+
+
+class RoleAdmin(admin.ModelAdmin):
+    list_display = ('name', 'display_name', 'is_active', 'created_at')
+    list_filter = ('is_active',)
+    search_fields = ('name', 'display_name')
+    filter_horizontal = ('permissions',)
+
+
+class PermissionAdmin(admin.ModelAdmin):
+    list_display = ('name', 'codename', 'module', 'is_active')
+    list_filter = ('is_active', 'module')
+    search_fields = ('name', 'codename')
+
+
+class ModuleAdmin(admin.ModelAdmin):
+    list_display = ('name', 'display_name', 'is_active', 'created_at')
+    list_filter = ('is_active',)
+    search_fields = ('name', 'display_name')
+
+
+# Register models with admin
+admin.site.register(User, UserAdmin)
+admin.site.register(Organization, OrganizationAdmin)
+admin.site.register(Role, RoleAdmin)
+admin.site.register(Permission, PermissionAdmin)
+admin.site.register(Module, ModuleAdmin)
