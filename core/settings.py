@@ -61,7 +61,7 @@ INSTALLED_APPS = [
     'audit',
     'leave',
     'files',
-    'notifications',
+    'announcement',
 ]
 
 MIDDLEWARE = [
