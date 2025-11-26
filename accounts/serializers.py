@@ -36,6 +36,7 @@ class UserListSerializer(serializers.ModelSerializer):
     shifts = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Shift.objects.filter(is_active=True), required=False
     )
+    profile_picture = serializers.SerializerMethodField()
     
     class Meta:
         model = User
@@ -44,6 +45,14 @@ class UserListSerializer(serializers.ModelSerializer):
             'organization', 'role', 'employee_type', 'joining_date', 'is_active', 
             'is_staff', 'is_superuser', 'designations', 'technologies', 'shifts', 'profile_picture'
         )
+    
+    def get_profile_picture(self, obj):
+        if obj.profile_picture:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.profile_picture.url)
+            return obj.profile_picture.url
+        return None
 
 class UserDetailSerializer(serializers.ModelSerializer):
     designations = serializers.PrimaryKeyRelatedField(
@@ -68,6 +77,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     # Use AddressSerializer for read operations to return full object
     current_address = AddressSerializer(read_only=True)
     permanent_address = AddressSerializer(read_only=True)
+    profile_picture = serializers.SerializerMethodField()
     
     class Meta:
         model = User
@@ -89,6 +99,14 @@ class UserDetailSerializer(serializers.ModelSerializer):
             'employee_id': {'read_only': True},
             'username': {'read_only': True}
         }
+
+    def get_profile_picture(self, obj):
+        if obj.profile_picture:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.profile_picture.url)
+            return obj.profile_picture.url
+        return None
 
     def validate(self, data):
         """Custom validation for probation and notice period fields"""

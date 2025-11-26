@@ -130,9 +130,9 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def upload_profile_picture(self, request, pk=None):
         """
-        Upload profile picture for a user.
-        - Users can upload their own profile picture
-        - Admins can upload profile pictures for any user
+        Upload or remove profile picture for a user.
+        - Users can upload/remove their own profile picture (no approval needed)
+        - Admins can upload/remove profile pictures for any user
         """
         user = self.get_object()
         
@@ -143,12 +143,27 @@ class UserViewSet(viewsets.ModelViewSet):
                 'detail': 'You can only update your own profile picture'
             }, status=status.HTTP_403_FORBIDDEN)
         
-        # Check if profile picture is provided
-        if 'profile_picture' not in request.FILES:
-            return Response({
-                'error': 'No profile picture provided',
-                'detail': 'Please select an image file to upload'
-            }, status=status.HTTP_400_BAD_REQUEST)
+        # Check if this is a removal request (empty file or no file)
+        if 'profile_picture' not in request.FILES or not request.FILES['profile_picture']:
+            # Remove profile picture
+            if user.profile_picture:
+                try:
+                    user.profile_picture.delete(save=False)
+                except Exception as e:
+                    print(f"Error deleting profile picture: {e}")
+                
+                user.profile_picture = None
+                user.save()
+                
+                return Response({
+                    'message': 'Profile picture removed successfully',
+                    'profile_picture_url': None
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'error': 'No profile picture to remove',
+                    'detail': 'User does not have a profile picture'
+                }, status=status.HTTP_400_BAD_REQUEST)
         
         profile_picture = request.FILES['profile_picture']
         
@@ -182,7 +197,7 @@ class UserViewSet(viewsets.ModelViewSet):
         
         return Response({
             'message': 'Profile picture updated successfully',
-            'profile_picture_url': user.profile_picture.url if user.profile_picture else None
+            'profile_picture_url': request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None
         }, status=status.HTTP_200_OK)
 
     
@@ -610,7 +625,7 @@ def custom_login(request):
             'name': authenticated_user.role.display_name if authenticated_user.role else None,
         } if authenticated_user.role else None,
         'joining_date': authenticated_user.joining_date,
-        'profile_picture': authenticated_user.profile_picture.url if authenticated_user.profile_picture else None,
+        'profile_picture': request.build_absolute_uri(authenticated_user.profile_picture.url) if authenticated_user.profile_picture else None,
     }
     
     # Update user's last login time
