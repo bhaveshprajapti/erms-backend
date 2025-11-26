@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice - DIGIWAVE Technologies</title>
+    <link rel="stylesheet" href="invoice.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Jaldi:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+      * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Jaldi', -apple-system, Roboto, Helvetica, sans-serif;
+    background: #f9fafb;
+    padding: 1rem;
+    line-height: 1.5;
+}
+
+/* Invoice wrapper */
+.invoice-wrapper {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 2rem 1rem;
+}
+
+.invoice-container {
+    max-width: 595px;
+    width: 100%;
+    background: #fff;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* Header section */
+.invoice-header {
+    position: relative;
+    height: 140px;
+}
+
+.header-curve {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.header-content {
+    position: absolute;
+    inset: 0;
+    padding: 1.25rem 2.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.logo-circle {
+    width: 75px;
+    height: 75px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.logo-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+}
+
+.company-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.company-name {
+    font-size: 40.422px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1;
+    margin: 0;
+}
+
+.company-tagline {
+    font-size: 15.307px;
+    font-weight: 400;
+    color: #fff;
+    letter-spacing: 4.133px;
+    text-align: center;
+}
+
+.header-address {
+    text-align: right;
+    color: #fff;
+    font-size: 12px;
+    line-height: 18px;
+    max-width: 177px;
+}
+
+/* Invoice body */
+.invoice-body {
+    padding: 1.5rem 2.5rem;
+}
+
+/* Invoice title section */
+.invoice-title-section {
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+
+.invoice-title {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.44px;
+    line-height: 18px;
+    margin-bottom: 0.5rem;
+}
+
+.invoice-number {
+    font-size: 14px;
+    letter-spacing: 0.28px;
+}
+
+/* Info row */
+.invoice-info-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.date-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.info-line {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 14px;
+    letter-spacing: 0.28px;
+    line-height: 18px;
+}
+
+.recipient-section {
+    text-align: right;
+    max-width: 177px;
+}
+
+.recipient-address {
+    font-size: 12px;
+    line-height: 18px;
+    margin-top: 0.5rem;
+}
+
+.label {
+    font-weight: 700;
+}
+
+.value {
+    font-weight: 400;
+}
+
+/* Divider */
+.divider {
+    border-top: 1px solid #000;
+    margin-bottom: 1.5rem;
+}
+
+/* Table */
+.table-wrapper {
+    overflow-x: auto;
+    margin: 1.5rem 0;
+}
+
+.invoice-table {
+    width: 100%;
+    min-width: 515px;
+    border-collapse: collapse;
+}
+
+.table-header {
+    background: #F3FFFF;
+    border-bottom: 2px solid #2CDBD9;
+}
+
+.table-header th {
+    padding: 0.5rem 0.75rem;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.28px;
+    line-height: 18px;
+}
+
+.table-row {
+    background: #FAFAFA;
+}
+
+.table-row td {
+    padding: 0.5rem 0.75rem;
+    font-size: 14px;
+    letter-spacing: 0.28px;
+    line-height: 18px;
+}
+
+.col-name {
+    text-align: left;
+    width: 206px;
+}
+
+.col-center {
+    text-align: center;
+}
+
+/* Bottom section */
+.bottom-section {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+    margin: 2rem 0;
+}
+
+.notes-section .label {
+    font-size: 14px;
+    letter-spacing: 0.28px;
+    line-height: 18px;
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+.notes-list {
+    list-style: none;
+    font-size: 12px;
+    letter-spacing: 0.24px;
+    line-height: 18px;
+}
+
+.notes-list li {
+    margin-bottom: 0.25rem;
+}
+
+.notes-list li::before {
+    content: "• ";
+    margin-right: 0.25rem;
+}
+
+.summary-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+}
+
+.summary-line {
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+    letter-spacing: 0.28px;
+    line-height: 18px;
+}
+
+.total-line {
+    color: #2CDBD9;
+    font-weight: 700;
+}
+
+/* Amount due box */
+.amount-due-box {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 2rem;
+}
+
+.amount-due-label,
+.amount-due-value {
+    background: #052455;
+    color: #fff;
+    padding: 0.375rem 1.25rem;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.28px;
+    line-height: 18px;
+}
+
+.amount-due-value {
+    text-align: right;
+    padding-left: 2rem;
+    padding-right: 2rem;
+}
+
+/* Footer info */
+.footer-info {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e5e7eb;
+}
+
+.bank-details,
+.contact-info {
+    font-size: 12px;
+    letter-spacing: 0.24px;
+    line-height: 18px;
+}
+
+.contact-info {
+    text-align: right;
+}
+
+.contact-name {
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+}
+
+.qr-section {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+}
+
+.qr-code {
+    width: 40px;
+    height: 40px;
+}
+
+/* Bottom bar */
+.bottom-bar {
+    width: 100%;
+    height: 9px;
+    background: #052455;
+}
+
+/* Responsive styles */
+@media (min-width: 640px) {
+    body {
+        padding: 2rem;
+    }
+}
+
+@media (min-width: 768px) {
+    .bottom-section {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (min-width: 1024px) {
+    .footer-info {
+        grid-template-columns: 1fr auto 1fr;
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 640px) {
+    .header-content {
+        padding: 1rem 1.5rem;
+    }
+
+    .logo-circle {
+        width: 55px;
+        height: 55px;
+    }
+
+    .company-name {
+        font-size: 28px;
+    }
+
+    .company-tagline {
+        font-size: 11px;
+        letter-spacing: 3px;
+    }
+
+    .header-address {
+        font-size: 10px;
+        max-width: 140px;
+    }
+
+    .invoice-body {
+        padding: 1rem 1.5rem;
+    }
+
+    .invoice-header {
+        height: 100px;
+    }
+
+    .invoice-info-row {
+        flex-direction: column;
+    }
+
+    .recipient-section {
+        text-align: left;
+        max-width: 100%;
+    }
+
+    .amount-due-box {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .amount-due-label,
+    .amount-due-value {
+        text-align: center;
+    }
+}
+
+@media print {
+    body {
+        background: #fff;
+        padding: 0;
+    }
+
+    .invoice-wrapper {
+        padding: 0;
+    }
+
+    .invoice-container {
+        box-shadow: none;
+    }
+}
+    </style>
+</head>
+<body>
+    <div class="invoice-wrapper">
+        <div class="invoice-container">
+            <!-- Header with curved background -->
+            <div class="invoice-header">
+                <svg class="header-curve" viewBox="0 0 595 140" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+                    <path d="M0 0H595V103L298 140L0 103V0Z" fill="#052455"/>
+                </svg>
+                
+                <div class="header-content">
+                    <div class="header-left">
+                        <div class="logo-circle">
+                            <img src="https://api.builder.io/api/v1/image/assets/TEMP/d72256a2e843ccf8e01519d4da3bd13580f7bc91?width=150" alt="Digiwave Logo" class="logo-img">
+                        </div>
+                        <div class="company-info">
+                            <h1 class="company-name">DIGIWAVE</h1>
+                            <p class="company-tagline">TECHNOLOGIES</p>
+                        </div>
+                    </div>
+                    
+                    <div class="header-address">
+                        401 medani jain hostel, navjivan press road, income tax cross road, Ahmedabad, gujarat, india-380009
+                    </div>
+                </div>
+            </div>
+
+            <!-- Invoice body -->
+            <div class="invoice-body">
+                <!-- Invoice title and number -->
+                <div class="invoice-title-section">
+                    <h2 class="invoice-title">Invoice</h2>
+                    <p class="invoice-number">#123456789231456</p>
+                </div>
+
+                <!-- Date and recipient info -->
+                <div class="invoice-info-row">
+                    <div class="date-section">
+                        <div class="info-line">
+                            <span class="label">Date:</span>
+                            <span class="value">22 August, 2025</span>
+                        </div>
+                        <div class="info-line">
+                            <span class="label">Due Date:</span>
+                            <span class="value">22 September, 2025</span>
+                        </div>
+                    </div>
+
+                    <div class="recipient-section">
+                        <p class="label">To:</p>
+                        <p class="recipient-address">
+                            401 medani jain hostel, navjivan press road, income tax cross road, Ahmedabad, gujarat, india-380009
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Divider line -->
+                <div class="divider"></div>
+
+                <!-- Items table -->
+                <div class="table-wrapper">
+                    <table class="invoice-table">
+                        <thead>
+                            <tr class="table-header">
+                                <th class="col-name">Name</th>
+                                <th class="col-center">Quantity</th>
+                                <th class="col-center">Price</th>
+                                <th class="col-center">Discount</th>
+                                <th class="col-center">Tax</th>
+                                <th class="col-center">Linetotal</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="table-row">
+                                <td class="col-name">App Development</td>
+                                <td class="col-center">1</td>
+                                <td class="col-center">2000</td>
+                                <td class="col-center">-</td>
+                                <td class="col-center">-</td>
+                                <td class="col-center">2000</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Notes and summary section -->
+                <div class="bottom-section">
+                    <div class="notes-section">
+                        <p class="label">Note:</p>
+                        <ul class="notes-list">
+                            <li>Lorem ipsum dolor sit amet</li>
+                            <li>Lorem ipsum dolor sit amet</li>
+                            <li>Lorem ipsum dolor sit amet</li>
+                        </ul>
+                    </div>
+
+                    <div class="summary-section">
+                        <div class="summary-line">
+                            <span class="label">Subtotal:</span>
+                            <span class="value">22 August, 2025</span>
+                        </div>
+                        <div class="summary-line">
+                            <span class="label">Tax:</span>
+                            <span class="value">0.00</span>
+                        </div>
+                        <div class="summary-line">
+                            <span class="label">Server charge:</span>
+                            <span class="value">(1 Year) 1000</span>
+                        </div>
+                        <div class="summary-line">
+                            <span class="label">Domain charge:</span>
+                            <span class="value">(3 Year) 7000</span>
+                        </div>
+                        <div class="summary-line total-line">
+                            <span class="label">Total:</span>
+                            <span class="value">RS. 2000</span>
+                        </div>
+                        <div class="summary-line">
+                            <span class="label">Paid:</span>
+                            <span class="value">RS. 1000</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Amount due box -->
+                <div class="amount-due-box">
+                    <div class="amount-due-label">Amount Due</div>
+                    <div class="amount-due-value">RS. 1000</div>
+                </div>
+
+                <!-- Footer info -->
+                <div class="footer-info">
+                    <div class="bank-details">
+                        <p>Account Holder: DOSHI NAMAN PRAKASHBHAI</p>
+                        <p>Account Number: 50100463075872</p>
+                        <p>IFSC: HDFC0004227</p>
+                        <p>Branch: JALARAM MANDIR PALDI</p>
+                        <p>Account Type: SAVING</p>
+                    </div>
+
+                    <div class="qr-section">
+                        <img src="https://api.builder.io/api/v1/image/assets/TEMP/d62f7f5ed1afb3b0de62d12bfb09c7184bdce99f?width=80" alt="QR Code" class="qr-code">
+                    </div>
+
+                    <div class="contact-info">
+                        <p class="contact-name">CEO Naman Doshi</p>
+                        <p>hello.digiwave@gmail.com</p>
+                        <p>+91 9624185617</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom bar -->
+            <div class="bottom-bar"></div>
+        </div>
+    </div>
+
+    <script>
+      // Invoice JavaScript - Add any interactive functionality here
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Invoice loaded successfully');
+    
+    // Add print functionality
+    const addPrintButton = () => {
+        const printBtn = document.createElement('button');
+        printBtn.textContent = 'Print Invoice';
+        printBtn.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #052455;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-family: 'Jaldi', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+        `;
+        
+        printBtn.addEventListener('click', () => {
+            window.print();
+        });
+        
+        printBtn.addEventListener('mouseenter', () => {
+            printBtn.style.background = '#073a7a';
+        });
+        
+        printBtn.addEventListener('mouseleave', () => {
+            printBtn.style.background = '#052455';
+        });
+        
+        document.body.appendChild(printBtn);
+    };
+    
+    // Uncomment to add print button
+    // addPrintButton();
+    
+    // Example: Dynamic invoice number generation
+    const generateInvoiceNumber = () => {
+        const timestamp = Date.now();
+        const random = Math.floor(Math.random() * 1000);
+        return `#${timestamp}${random}`;
+    };
+    
+    // Example: Update current date
+    const updateDates = () => {
+        const today = new Date();
+        const dueDate = new Date(today);
+        dueDate.setDate(dueDate.getDate() + 30);
+        
+        const formatDate = (date) => {
+            const options = { day: '2-digit', month: 'long', year: 'numeric' };
+            return date.toLocaleDateString('en-GB', options).replace(',', '');
+        };
+        
+        // Uncomment to update dates dynamically
+        // const dateElements = document.querySelectorAll('.info-line .value');
+        // if (dateElements[0]) dateElements[0].textContent = formatDate(today);
+        // if (dateElements[1]) dateElements[1].textContent = formatDate(dueDate);
+    };
+    
+    // Initialize functions
+    updateDates();
+});
+
+// Export functions for external use
+window.InvoiceUtils = {
+    generateInvoiceNumber: () => {
+        const timestamp = Date.now();
+        const random = Math.floor(Math.random() * 1000);
+        return `#${timestamp}${random}`;
+    },
+    
+    formatCurrency: (amount, currency = 'RS') => {
+        return `${currency}. ${amount.toLocaleString()}`;
+    },
+    
+    calculateTotal: (items) => {
+        return items.reduce((total, item) => {
+            const lineTotal = (item.price || 0) * (item.quantity || 0);
+            const discount = item.discount || 0;
+            const tax = item.tax || 0;
+            return total + lineTotal - discount + tax;
+        }, 0);
+    }
+};
+
+    </script>
+</body>
+</html>
