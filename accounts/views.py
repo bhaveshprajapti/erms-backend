@@ -127,6 +127,65 @@ class UserViewSet(viewsets.ModelViewSet):
             "employees":serializers.data
         })
     
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def upload_profile_picture(self, request, pk=None):
+        """
+        Upload profile picture for a user.
+        - Users can upload their own profile picture
+        - Admins can upload profile pictures for any user
+        """
+        user = self.get_object()
+        
+        # Check permissions: user can update own profile, or admin can update any
+        if user.id != request.user.id and not (request.user.is_staff or request.user.is_superuser):
+            return Response({
+                'error': 'Permission denied',
+                'detail': 'You can only update your own profile picture'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Check if profile picture is provided
+        if 'profile_picture' not in request.FILES:
+            return Response({
+                'error': 'No profile picture provided',
+                'detail': 'Please select an image file to upload'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        profile_picture = request.FILES['profile_picture']
+        
+        # Validate file type
+        allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+        if profile_picture.content_type not in allowed_types:
+            return Response({
+                'error': 'Invalid file type',
+                'detail': 'Please upload a valid image file (JPEG, PNG, GIF, or WebP)'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate file size (max 5MB)
+        max_size = 5 * 1024 * 1024  # 5MB in bytes
+        if profile_picture.size > max_size:
+            return Response({
+                'error': 'File too large',
+                'detail': 'Profile picture must be less than 5MB'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Delete old profile picture if exists
+        if user.profile_picture:
+            try:
+                user.profile_picture.delete(save=False)
+            except Exception as e:
+                # Log error but continue with upload
+                print(f"Error deleting old profile picture: {e}")
+        
+        # Save new profile picture
+        user.profile_picture = profile_picture
+        user.save()
+        
+        return Response({
+            'message': 'Profile picture updated successfully',
+            'profile_picture_url': user.profile_picture.url if user.profile_picture else None
+        }, status=status.HTTP_200_OK)
+
+    
 class OrganizationViewSet(viewsets.ModelViewSet):
     queryset = Organization.objects.all().order_by('-created_at')
     serializer_class = OrganizationSerializer
