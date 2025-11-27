@@ -124,16 +124,9 @@ class LeaveTypePolicy(models.Model):
         
         return True
     
-    def save(self, *args, **kwargs):
-        """Override save to auto-sync max_per_month with max_occurrences_per_month"""
-        # Set max_per_month to the same value as max_occurrences_per_month
-        if self.max_occurrences_per_month is not None:
-            # Convert decimal to integer for max_per_month field
-            self.max_per_month = int(self.max_occurrences_per_month)
-        else:
-            self.max_per_month = None
-            
-        super().save(*args, **kwargs)
+    # Removed auto-sync logic - max_per_month and max_occurrences_per_month are independent fields
+    # max_per_month: Maximum total days per month (e.g., 5 days)
+    # max_occurrences_per_month: Maximum number of leave requests per month (e.g., 2 requests)
 
 
 class LeaveBalance(models.Model):

@@ -71,12 +71,6 @@ class LeaveTypePolicySerializer(serializers.ModelSerializer):
         if data.get('carry_forward_enabled') and not data.get('carry_forward_limit'):
             raise serializers.ValidationError("Carry forward limit is required when carry forward is enabled")
         
-        # Auto-sync max_per_month with max_occurrences_per_month
-        if data.get('max_occurrences_per_month') is not None:
-            data['max_per_month'] = int(data['max_occurrences_per_month'])
-        elif 'max_occurrences_per_month' in data and data['max_occurrences_per_month'] is None:
-            data['max_per_month'] = None
-        
         return data
 
 
