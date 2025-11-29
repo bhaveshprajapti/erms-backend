@@ -50,12 +50,12 @@ class LeaveTypePolicy(models.Model):
     accrual_frequency = models.CharField(max_length=10, choices=FREQUENCY_CHOICES, default='monthly')
     accrual_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text="Leave accrued per frequency period")
     
-    # Usage limits
-    max_per_week = models.PositiveIntegerField(null=True, blank=True, help_text="Maximum days per week")
-    max_per_month = models.PositiveIntegerField(null=True, blank=True, help_text="Maximum days per month")
-    max_per_year = models.PositiveIntegerField(null=True, blank=True, help_text="Maximum days per year")
-    max_consecutive_days = models.PositiveIntegerField(null=True, blank=True, help_text="Maximum consecutive days")
-    max_occurrences_per_month = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Maximum number of leave occurrences per month (can be fractional like 1.5)")
+    # Usage limits (all support decimal values like 1.5 for half-day)
+    max_per_week = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Maximum days per week (supports half-day like 1.5)")
+    max_per_month = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Maximum days per month (supports half-day like 1.5)")
+    max_per_year = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Maximum days per year (supports half-day like 1.5)")
+    max_consecutive_days = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Maximum consecutive days (supports half-day like 1.5)")
+    max_occurrences_per_month = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Maximum number of leave requests per month (supports half-day like 1.5)")
     
     # Notice and approval requirements
     min_notice_days = models.PositiveIntegerField(default=0, help_text="Minimum notice required in days")
@@ -223,23 +223,23 @@ class LeaveBalance(models.Model):
                 if month_used + days > self.policy.max_per_month:
                     return False, f"Monthly limit exceeded. Limit: {self.policy.max_per_month}, Used: {month_used}, Requested: {days}"
             
-            # Check monthly occurrence limit
+            # Check monthly requests limit (max_occurrences_per_month)
             if self.policy.max_occurrences_per_month is not None and start_date:
-                month_occurrences = self.user.leave_applications.filter(
+                month_requests = self.user.leave_applications.filter(
                     leave_type=self.leave_type,
                     status__in=['approved', 'pending'],
                     start_date__year=start_date.year,
                     start_date__month=start_date.month
                 ).count()
                 
-                # Calculate the occurrence value for this request
-                # Full day = 1 occurrence, Half day = 0.5 occurrence
-                current_occurrence = Decimal('0.5') if days == Decimal('0.5') else Decimal('1.0')
+                # Calculate the request value for this request
+                # Full day = 1 request, Half day = 0.5 request
+                current_request = Decimal('0.5') if days == Decimal('0.5') else Decimal('1.0')
                 
-                total_occurrences = Decimal(str(month_occurrences)) + current_occurrence
+                total_requests = Decimal(str(month_requests)) + current_request
                 
-                if total_occurrences > self.policy.max_occurrences_per_month:
-                    return False, f"Monthly occurrence limit exceeded. Limit: {self.policy.max_occurrences_per_month}, Used: {month_occurrences}, Requested: {current_occurrence}"
+                if total_requests > self.policy.max_occurrences_per_month:
+                    return False, f"Monthly requests limit exceeded. Limit: {self.policy.max_occurrences_per_month}, Used: {month_requests}, Requested: {current_request}"
         
         # Check overall leave policy restrictions
         overall_policies = OverallLeavePolicy.objects.filter(is_active=True)
