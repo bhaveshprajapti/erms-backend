@@ -37,6 +37,10 @@ class AttendanceSerializer(serializers.ModelSerializer):
         
         sessions = obj.sessions or []
         
+        # Check if this is an "On Audit" attendance
+        if getattr(obj, 'is_on_audit', False):
+            return 'On Audit'
+        
         # If day ended, use the final status
         if hasattr(obj, 'day_ended') and obj.day_ended and hasattr(obj, 'day_status') and obj.day_status:
             return obj.day_status
@@ -53,6 +57,10 @@ class AttendanceSerializer(serializers.ModelSerializer):
         viewset = AttendanceViewSet()
         
         sessions = obj.sessions or []
+        
+        # Check if this is an "On Audit" attendance
+        if getattr(obj, 'is_on_audit', False):
+            return 'On Audit'
         
         # If day ended, use the final status
         if hasattr(obj, 'day_ended') and obj.day_ended and hasattr(obj, 'day_status') and obj.day_status:
@@ -90,7 +98,14 @@ class AttendanceSerializer(serializers.ModelSerializer):
         if sessions and 'check_in' in sessions[0]:
             from datetime import datetime
             from common.timezone_utils import get_ist_time
-            check_in = datetime.fromisoformat(sessions[0]['check_in'])
+            check_in_val = sessions[0]['check_in']
+            # Handle both string and datetime objects
+            if isinstance(check_in_val, str):
+                check_in = datetime.fromisoformat(check_in_val)
+            elif isinstance(check_in_val, datetime):
+                check_in = check_in_val
+            else:
+                return None
             ist_time = get_ist_time(check_in)
             return ist_time.strftime('%I:%M %p')
         return None
@@ -101,20 +116,31 @@ class AttendanceSerializer(serializers.ModelSerializer):
         if sessions:
             # Find the last session with check_out
             for session in reversed(sessions):
-                if 'check_out' in session:
+                if 'check_out' in session and session['check_out']:
                     from datetime import datetime
                     from common.timezone_utils import get_ist_time
-                    check_out = datetime.fromisoformat(session['check_out'])
+                    check_out_val = session['check_out']
+                    # Handle both string and datetime objects
+                    if isinstance(check_out_val, str):
+                        check_out = datetime.fromisoformat(check_out_val)
+                    elif isinstance(check_out_val, datetime):
+                        check_out = check_out_val
+                    else:
+                        continue
                     ist_time = get_ist_time(check_out)
                     return ist_time.strftime('%I:%M %p')
         return None
     
     def get_result_status(self, obj):
-        """Get result status (Present, Absent, Half Day, etc.)"""
+        """Get result status (Present, Absent, Half Day, On Audit, etc.)"""
         from .views import AttendanceViewSet
         viewset = AttendanceViewSet()
         
         sessions = obj.sessions or []
+        
+        # Check if this is an "On Audit" attendance
+        if getattr(obj, 'is_on_audit', False):
+            return 'On Audit'
         
         # If day ended, use the final status
         if hasattr(obj, 'day_ended') and obj.day_ended and hasattr(obj, 'day_status') and obj.day_status:

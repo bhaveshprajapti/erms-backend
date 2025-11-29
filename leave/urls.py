@@ -12,8 +12,8 @@ router.register(r'flexible-timing-requests', views.FlexibleTimingRequestViewSet,
 router.register(r'flexible-timing-balances', views.FlexibleTimingBalanceViewSet, basename='flexibletimingbalance')
 
 urlpatterns = [
-    path('api/v1/', include(router.urls)),
-    path('api/v1/calendar/', views.leave_calendar, name='leave-calendar'),
-    path('api/v1/statistics/', views.leave_statistics, name='leave-statistics'),
-    path('api/v1/test/', views.test_view, name='leave-test'),
+    path('', include(router.urls)),
+    path('calendar/', views.leave_calendar, name='leave-calendar'),
+    path('statistics/', views.leave_statistics, name='leave-statistics'),
+    path('test/', views.test_view, name='leave-test'),
 ]

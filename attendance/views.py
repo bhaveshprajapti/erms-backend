@@ -317,7 +317,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                         attendance.day_end_time = timezone.now()
                         
                         # Calculate day status
-                        day_status = self._calculate_day_status(attendance.total_hours, user)
+                        day_status = self._calculate_day_status(attendance.total_hours, user, attendance)
                         attendance.day_status = day_status
                         
                         attendance.save()
@@ -505,6 +505,100 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             'message': 'Checked in successfully',
             'check_in_time': now.isoformat(),
             'session_count': len(sessions)
+        })
+
+    @action(detail=False, methods=['post'])
+    def check_in_on_audit(self, request):
+        """
+        Check-in on audit mode for employees with audit access.
+        This bypasses all time restrictions and marks attendance as 'On Audit'.
+        Working hours are still calculated normally.
+        """
+        user = request.user
+        now = timezone.now()
+        today = get_ist_date(now)
+        
+        # Check if user has audit check-in access via their role OR designation
+        has_role_access = user.role and getattr(user.role, 'can_check_in_on_audit', False)
+        has_designation_access = user.designations.filter(can_check_in_on_audit=True).exists()
+        
+        if not has_role_access and not has_designation_access:
+            return Response({
+                'detail': 'You do not have permission to check in on audit. Contact admin.'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Check for expired sessions
+        try:
+            SessionLog.check_and_handle_expired_sessions()
+            active_session = SessionLog.get_active_session(user)
+            if active_session and active_session.is_session_expired():
+                return Response({
+                    'detail': 'Session expired. Please log in again to continue.',
+                    'session_expired': True
+                }, status=status.HTTP_401_UNAUTHORIZED)
+            if active_session:
+                active_session.update_activity()
+        except Exception as e:
+            print(f"Session management not available: {e}")
+        
+        # Cleanup previous day's sessions
+        self._cleanup_previous_active_sessions(user, today, request)
+        
+        # Get or create attendance record
+        attendance, created = Attendance.objects.get_or_create(
+            user=user,
+            date=today,
+            defaults={'sessions': [], 'is_on_audit': True}
+        )
+        
+        # Mark as on audit
+        attendance.is_on_audit = True
+        
+        sessions = attendance.sessions or []
+        
+        # Check if day has ended
+        if hasattr(attendance, 'day_ended') and attendance.day_ended:
+            return Response({
+                'detail': 'Day has already ended. Cannot check in again today.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if already checked in
+        if sessions and 'check_out' not in sessions[-1]:
+            return Response({
+                'detail': 'Already checked in. Please start break first.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Add new session
+        location = request.data.get('location', {})
+        new_session = {
+            'check_in': now.isoformat(),
+            'location_in': location,
+            'is_audit_session': True
+        }
+        sessions.append(new_session)
+        
+        attendance.sessions = sessions
+        attendance.save()
+        
+        # Log the event
+        try:
+            SessionLog.log_event(
+                user=user,
+                event_type='check_in',
+                date=today,
+                session_count=len(sessions),
+                location=location,
+                request=request,
+                notes='Check-in on audit mode'
+            )
+        except Exception as e:
+            print(f"Failed to log check-in event: {e}")
+        
+        return Response({
+            'message': 'Checked in on audit successfully',
+            'check_in_time': now.isoformat(),
+            'session_count': len(sessions),
+            'is_on_audit': True
         })
 
     @action(detail=False, methods=['post'])
@@ -726,7 +820,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         attendance.day_end_time = now
         
         # Calculate day status based on working hours
-        day_status = self._calculate_day_status(attendance.total_hours, attendance.user)
+        day_status = self._calculate_day_status(attendance.total_hours, attendance.user, attendance)
         attendance.day_status = day_status
         
         attendance.save()
@@ -768,42 +862,64 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             print(f"Session management not available in update_session_activity: {e}")
             return Response({'detail': 'Session management is not available.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def _calculate_day_status(self, total_hours, user=None):
-        """Calculate day status based on working hours and employee type"""
+    def _calculate_day_status(self, total_hours, user=None, attendance=None):
+        """
+        Calculate day status based on working hours and employee type
+        
+        Rules:
+        1. On Audit check-in: Always "On Audit" status (bypass all calculations)
+        2. Late check-in (first 2 per month): Normal calculation (Present if 8+ hours)
+        3. Late check-in (3rd onwards): Half Day regardless of working hours
+        4. Normal check-in: Standard working hours calculation
+        """
         if not total_hours:
             return 'Absent'
         
         # Convert to total seconds
         total_seconds = total_hours.total_seconds()
 
+        # Check if this attendance was marked as "On Audit"
+        if attendance and getattr(attendance, 'is_on_audit', False):
+            return 'On Audit'
+
         audit_setting = UserAttendanceSetting.objects.filter(user=user).first()
 
         if audit_setting and audit_setting.is_audit_mode_active:
-        # In audit mode → only count time worked, no half-day/full-day logic
+            # In audit mode → only count time worked, no half-day/full-day logic
             if total_seconds > 0:
                 return 'Present'
             else:
                 return 'Absent'
         
-        # start check in late 
+        # Check for late check-in rules
         today = timezone.now().date()
-
+        
+        # Get current attendance record to check if it's a late check-in
+        current_attendance = attendance
+        if not current_attendance and user:
+            current_attendance = Attendance.objects.filter(user=user, date=today).first()
+        
+        is_current_late = current_attendance and getattr(current_attendance, 'late_checkin', False)
+        
+        # Count late check-ins this month (excluding current day to avoid double counting)
         late_count = Attendance.objects.filter(
             user=user,
             date__year=today.year,
             date__month=today.month,
             late_checkin=True
-        ).count()
-
-        if late_count > 2:
-            if total_seconds >= 8 * 3600:
-                return 'Present'
-            elif total_seconds >= 4 * 3600:
-                return 'Half Day'
-            else:
-                return 'Absent'
+        ).exclude(date=today).count()
         
-        # if audit mode off
+        # If current attendance is late, add it to the count
+        if is_current_late:
+            late_count += 1
+
+        # Late check-in rules:
+        # - First 2 late check-ins per month: Normal calculation (count as Present if 8+ hours)
+        # - 3rd late check-in onwards: Mark as Half Day regardless of working hours
+        if is_current_late and late_count > 2:
+            # 3rd or more late check-in this month - mark as Half Day
+            return 'Half Day'
+        
         # Check if employee is a half-day employee type
         is_half_day_employee = False
         is_freelancer_employee = False 
@@ -826,11 +942,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if total_seconds < 4 * 3600:
             return 'Absent'
             
-        # 3.5 to 7.5 hours = Half Day
-        if 4 * 3600 <= total_seconds < 8* 3600:
+        # 4 to 8 hours = Half Day
+        if 4 * 3600 <= total_seconds < 8 * 3600:
             return 'Half Day'
             
-        # 7 hours or more = Present
+        # 8 hours or more = Present
         if total_seconds >= 8 * 3600:
             return 'Present'
         
@@ -1005,7 +1121,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 attendance.sessions = sessions
                 attendance.day_status = self._calculate_day_status(
                     attendance.total_hours,
-                    attendance.user
+                    attendance.user,
+                    attendance
                 )  # Set to Present since user has completed sessions
             else:
                 # No sessions - user never checked in
@@ -1259,7 +1376,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             # Users must manually end their workday
             
             # Calculate attendance status
-            if day_ended:
+            # Check if this is an "On Audit" attendance first
+            if getattr(attendance, 'is_on_audit', False):
+                attendance_status = 'On Audit'
+                calendar_status = 'On Audit'
+            elif day_ended:
                 attendance_status = getattr(attendance, 'day_status', 'Absent')
                 calendar_status = attendance_status  # Same for both when day ended
             else:
@@ -1477,7 +1598,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     # Check if any session has check_in
                     if any(session.get('check_in') for session in attendance.sessions):
                         # Calculate day status to determine if it's full day or half day
-                        day_status = self._calculate_day_status(attendance.total_hours, employee)
+                        day_status = self._calculate_day_status(attendance.total_hours, employee, attendance)
                         
                         if day_status == 'Present':
                             present_days += 1.0  # Full day

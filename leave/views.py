@@ -148,10 +148,8 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
             serializer = LeaveTypePolicySerializer(applicable_policy)
             return Response(serializer.data)
         else:
-            return Response(
-                {'error': 'No applicable policy found for this leave type'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            # Return null instead of 404 - no policy is a valid state
+            return Response(None)
 
 
 class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
@@ -1006,18 +1004,9 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
         
-        # If application was approved, restore the balance
+        # If application was approved, restore the balance (handles cross-month)
         if application.status == 'approved':
-            try:
-                balance = LeaveBalance.objects.get(
-                    user=application.user,
-                    leave_type=application.leave_type,
-                    year=application.start_date.year
-                )
-                balance.used_balance = max(Decimal('0'), balance.used_balance - application.total_days)
-                balance.save()
-            except LeaveBalance.DoesNotExist:
-                pass
+            application._restore_balances_for_cancellation()
         
         # Delete the application
         application.delete()

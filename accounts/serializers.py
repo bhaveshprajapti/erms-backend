@@ -4,7 +4,7 @@ from django.conf import settings
 from rest_framework import serializers
 from .models import User, Role, ProfileUpdateRequest, Organization, Module, Permission, EmployeePayment
 from common.models import Address, Designation, Technology, Shift
-from common.serializers import AddressSerializer
+from common.serializers import AddressSerializer, DesignationSerializer
 
 class OrganizationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -55,14 +55,19 @@ class UserListSerializer(serializers.ModelSerializer):
         return None
 
 class UserDetailSerializer(serializers.ModelSerializer):
-    designations = serializers.PrimaryKeyRelatedField(
-        many=True, queryset=Designation.objects.filter(is_active=True), required=False
+    designations = DesignationSerializer(many=True, read_only=True)  # Nested serializer for full designation data including can_check_in_on_audit
+    designation_ids = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Designation.objects.filter(is_active=True), source='designations', write_only=True, required=False
     )
     technologies = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Technology.objects.filter(is_active=True), required=False
     )
     shifts = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Shift.objects.filter(is_active=True), required=False
+    )
+    role = RoleSerializer(read_only=True)  # Nested serializer for full role data including can_check_in_on_audit
+    role_id = serializers.PrimaryKeyRelatedField(
+        queryset=Role.objects.all(), source='role', write_only=True, required=False
     )
     create_folder = serializers.BooleanField(write_only=True, required=False, default=False)
     
@@ -83,9 +88,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'employee_id', 'username', 'password', 'plain_password', 'first_name', 'last_name', 'email', 'phone',
-            'organization', 'role', 'employee_type', 'joining_date', 'birth_date',
+            'organization', 'role', 'role_id', 'employee_type', 'joining_date', 'birth_date',
             'gender', 'marital_status', 'is_active', 'is_staff', 'is_superuser', 'employee_details',
-            'emergency_contact', 'emergency_phone', 'salary', 'designations', 'technologies', 'shifts',
+            'emergency_contact', 'emergency_phone', 'salary', 'designations', 'designation_ids', 'technologies', 'shifts',
             'folder_path', 'create_folder', 'is_on_probation', 'probation_months',
             'is_on_notice_period', 'notice_period_end_date', 'profile_picture',
             'current_address', 'permanent_address', 'current_address_text', 

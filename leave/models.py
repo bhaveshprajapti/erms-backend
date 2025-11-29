@@ -424,21 +424,10 @@ class LeaveApplication(models.Model):
             self._update_leave_balance_on_approval()
     
     def _update_leave_balance_on_approval(self):
-        """Update leave balance when application is approved"""
+        """Update leave balance when application is approved (handles cross-month)"""
         try:
-            balance, created = LeaveBalance.objects.get_or_create(
-                user=self.user,
-                leave_type=self.leave_type,
-                year=self.start_date.year,
-                defaults={
-                    'policy': self.policy,
-                    'opening_balance': self.policy.annual_quota if self.policy else 0
-                }
-            )
-            
-            # Deduct the approved days from balance
-            balance.used_balance += self.total_days
-            balance.save()
+            # Use cross-month logic for balance deduction
+            self._update_balances_for_approval()
             
         except Exception as e:
             # Log the error but don't fail the save
@@ -476,6 +465,64 @@ class LeaveApplication(models.Model):
         # For pending/approved applications, allow deletion until end date
         return self.end_date >= date.today()
     
+    def _get_days_per_month(self):
+        """
+        Calculate how many leave days fall in each month.
+        Returns a dict: {(year, month): days_count}
+        Used for cross-month leave deduction.
+        """
+        from datetime import timedelta
+        days_per_month = {}
+        current_date = self.start_date
+        
+        while current_date <= self.end_date:
+            key = (current_date.year, current_date.month)
+            # Count as 0.5 if half day, otherwise 1
+            day_value = Decimal('0.5') if self.is_half_day else Decimal('1')
+            
+            if key in days_per_month:
+                days_per_month[key] += day_value
+            else:
+                days_per_month[key] = day_value
+            
+            current_date += timedelta(days=1)
+            
+            # For half day, only count one day
+            if self.is_half_day:
+                break
+        
+        return days_per_month
+    
+    def _update_balances_for_approval(self):
+        """Deduct leave days from appropriate month balances (handles cross-month)"""
+        days_per_month = self._get_days_per_month()
+        
+        for (year, month), days in days_per_month.items():
+            balance, created = LeaveBalance.objects.get_or_create(
+                user=self.user,
+                leave_type=self.leave_type,
+                year=year,
+                defaults={'policy': self.policy}
+            )
+            balance.used_balance += days
+            balance.save()
+    
+    def _restore_balances_for_cancellation(self):
+        """Restore leave days to appropriate month balances (handles cross-month)"""
+        days_per_month = self._get_days_per_month()
+        
+        for (year, month), days in days_per_month.items():
+            try:
+                balance = LeaveBalance.objects.get(
+                    user=self.user,
+                    leave_type=self.leave_type,
+                    year=year
+                )
+                balance.used_balance = max(Decimal('0'), balance.used_balance - days)
+                balance.save()
+            except LeaveBalance.DoesNotExist:
+                pass
+    
     def approve(self, approved_by, comments=None):
         """Approve the leave application"""
         self.status = 'approved'
@@ -485,30 +532,14 @@ class LeaveApplication(models.Model):
             self.admin_comments = comments
         self.save()
         
-        # Update leave balance - deduct the approved days
-        balance, created = LeaveBalance.objects.get_or_create(
-            user=self.user,
-            leave_type=self.leave_type,
-            year=self.start_date.year,
-            defaults={'policy': self.policy}
-        )
-        balance.used_balance += self.total_days
-        balance.save()
+        # Update leave balance - deduct the approved days (handles cross-month)
+        self._update_balances_for_approval()
     
     def reject(self, rejected_by, reason, comments=None):
         """Reject the leave application"""
-        # If this was previously approved, restore the balance
+        # If this was previously approved, restore the balance (handles cross-month)
         if self.status == 'approved':
-            try:
-                balance = LeaveBalance.objects.get(
-                    user=self.user,
-                    leave_type=self.leave_type,
-                    year=self.start_date.year
-                )
-                balance.used_balance = max(Decimal('0'), balance.used_balance - self.total_days)
-                balance.save()
-            except LeaveBalance.DoesNotExist:
-                pass
+            self._restore_balances_for_cancellation()
         
         self.status = 'rejected'
         self.approved_by = rejected_by
@@ -519,18 +550,9 @@ class LeaveApplication(models.Model):
     
     def cancel(self, cancelled_by=None):
         """Cancel the leave application and restore balance if it was approved"""
-        # If this was previously approved, restore the balance
+        # If this was previously approved, restore the balance (handles cross-month)
         if self.status == 'approved':
-            try:
-                balance = LeaveBalance.objects.get(
-                    user=self.user,
-                    leave_type=self.leave_type,
-                    year=self.start_date.year
-                )
-                balance.used_balance = max(Decimal('0'), balance.used_balance - self.total_days)
-                balance.save()
-            except LeaveBalance.DoesNotExist:
-                pass
+            self._restore_balances_for_cancellation()
         
         self.status = 'cancelled'
         if cancelled_by:

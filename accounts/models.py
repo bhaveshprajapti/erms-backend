@@ -54,6 +54,10 @@ class Role(models.Model):
     display_name = models.CharField(max_length=100)
     permissions = models.ManyToManyField(Permission, blank=True)
     is_active = models.BooleanField(default=True)
+    can_check_in_on_audit = models.BooleanField(
+        default=False, 
+        help_text="If enabled, employees with this role can use 'Check In On Audit' button which bypasses time restrictions"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

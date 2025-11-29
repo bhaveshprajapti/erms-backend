@@ -23,6 +23,7 @@ class Attendance(models.Model):
     admin_reset_count = models.PositiveIntegerField(default=0)  # Track number of resets per day
     created_at = models.DateTimeField(auto_now_add=True)
     late_checkin = models.BooleanField(default=False)
+    is_on_audit = models.BooleanField(default=False, help_text="If True, this attendance was checked in via 'On Audit' mode - bypasses day status calculation")
 
     class Meta:
         unique_together = ('user', 'date')

@@ -355,10 +355,60 @@ class LeaveApplicationCreateSerializer(serializers.ModelSerializer):
                         days_count = working_days
                     request_days = Decimal(str(days_count))
                 
-                # Validate against balance and policy limits
+                # Validate against balance and policy limits for single month
                 can_apply, error_message = balance.can_apply_for_days(request_days, start_date, end_date)
                 if not can_apply:
                     raise serializers.ValidationError(error_message)
+                
+                # Cross-month validation: check if leave spans multiple months
+                if start_date.month != end_date.month or start_date.year != end_date.year:
+                    # Calculate days per month
+                    days_per_month = {}
+                    current_date = start_date
+                    while current_date <= end_date:
+                        key = (current_date.year, current_date.month)
+                        day_value = Decimal('0.5') if is_half_day else Decimal('1')
+                        
+                        # Skip Sundays if weekends not included
+                        if applicable_policy and not applicable_policy.include_weekends:
+                            if current_date.weekday() == 6:  # Sunday
+                                current_date += timedelta(days=1)
+                                continue
+                        
+                        if key in days_per_month:
+                            days_per_month[key] += day_value
+                        else:
+                            days_per_month[key] = day_value
+                        
+                        current_date += timedelta(days=1)
+                        if is_half_day:
+                            break
+                    
+                    # Validate balance for each month
+                    insufficient_months = []
+                    for (year, month), days_needed in days_per_month.items():
+                        month_balance, _ = LeaveBalance.objects.get_or_create(
+                            user=user,
+                            leave_type=leave_type,
+                            year=year,
+                            defaults={
+                                'policy': applicable_policy,
+                                'opening_balance': applicable_policy.annual_quota or 0
+                            }
+                        )
+                        
+                        # Check if this month has enough balance
+                        available = month_balance.remaining_balance
+                        if available < days_needed:
+                            month_name = date(year, month, 1).strftime('%B %Y')
+                            insufficient_months.append(
+                                f"{month_name}: need {days_needed} days, available {available} days"
+                            )
+                    
+                    if insufficient_months:
+                        raise serializers.ValidationError(
+                            f"Insufficient balance for cross-month leave. " + "; ".join(insufficient_months)
+                        )
         
         return data
 

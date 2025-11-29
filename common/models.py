@@ -80,6 +80,10 @@ class Designation(models.Model):
     title = models.CharField(max_length=100, unique=True)
     level = models.PositiveIntegerField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    can_check_in_on_audit = models.BooleanField(
+        default=False,
+        help_text="If enabled, employees with this designation can use 'Check In On Audit' button which bypasses time restrictions"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -45,11 +45,28 @@ class PermissionAdmin(admin.ModelAdmin):
 
 @admin.register(Role)
 class RoleAdmin(admin.ModelAdmin):
-    list_display = ['name', 'display_name', 'permissions_count', 'is_active', 'created_at']
-    list_filter = ['is_active', 'created_at']
+    list_display = ['name', 'display_name', 'permissions_count', 'can_check_in_on_audit', 'is_active', 'created_at']
+    list_filter = ['is_active', 'can_check_in_on_audit', 'created_at']
     search_fields = ['name', 'display_name']
     filter_horizontal = ['permissions']
     readonly_fields = ['created_at']
+    
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'display_name', 'is_active')
+        }),
+        ('Permissions', {
+            'fields': ('permissions',)
+        }),
+        ('Audit Access', {
+            'fields': ('can_check_in_on_audit',),
+            'description': 'Enable "Check In On Audit" button for employees with this role. This allows check-in anytime without time restrictions.'
+        }),
+        ('Timestamps', {
+            'fields': ('created_at',),
+            'classes': ('collapse',)
+        }),
+    )
     
     def permissions_count(self, obj):
         count = obj.permissions.count()

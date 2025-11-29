@@ -8,10 +8,10 @@ from .models import Attendance, LeaveRequest, TimeAdjustment, Approval, SessionL
 class AttendanceAdmin(admin.ModelAdmin):
     list_display = [
         'user', 'date', 'total_hours_display', 'day_status_display',
-        'late_checkin_display','day_ended', 'sessions_count', 'admin_reset_count', 'created_at'
+        'late_checkin_display', 'is_on_audit_display', 'day_ended', 'sessions_count', 'admin_reset_count', 'created_at'
     ]
     list_filter = [
-        'day_ended', 'day_status','late_checkin', 'date', 'created_at', 'admin_reset_count'
+        'day_ended', 'day_status', 'late_checkin', 'is_on_audit', 'date', 'created_at', 'admin_reset_count'
     ]
     search_fields = ['user__username', 'user__email', 'notes']
     readonly_fields = [
@@ -34,7 +34,7 @@ class AttendanceAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Status & Location', {
-            'fields': ('day_status', 'location', 'notes')
+            'fields': ('day_status', 'late_checkin', 'is_on_audit', 'location', 'notes')
         }),
         ('Admin Actions', {
             'fields': ('admin_reset_at', 'admin_reset_count'),
@@ -98,6 +98,12 @@ class AttendanceAdmin(admin.ModelAdmin):
             return format_html('<span style="color: red; font-weight: bold;">Late</span>')
         return format_html('<span style="color: green;">On Time</span>')
     late_checkin_display.short_description = 'Late?'
+    
+    def is_on_audit_display(self, obj):
+        if getattr(obj, 'is_on_audit', False):
+            return format_html('<span style="color: blue; font-weight: bold;">On Audit</span>')
+        return format_html('<span style="color: gray;">Normal</span>')
+    is_on_audit_display.short_description = 'Audit Mode'
     
     def sessions_display(self, obj):
         if obj.sessions:

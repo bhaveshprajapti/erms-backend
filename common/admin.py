@@ -82,11 +82,25 @@ class EmployeeTypeAdmin(admin.ModelAdmin):
 
 @admin.register(Designation)
 class DesignationAdmin(admin.ModelAdmin):
-    list_display = ['title', 'level', 'is_active', 'created_at']
-    list_filter = ['is_active', 'level', 'created_at']
+    list_display = ['title', 'level', 'can_check_in_on_audit', 'is_active', 'created_at']
+    list_filter = ['is_active', 'can_check_in_on_audit', 'level', 'created_at']
     search_fields = ['title']
     readonly_fields = ['created_at', 'updated_at']
     ordering = ['level', 'title']
+    
+    fieldsets = (
+        ('Designation Details', {
+            'fields': ('title', 'level', 'is_active')
+        }),
+        ('Audit Access', {
+            'fields': ('can_check_in_on_audit',),
+            'description': 'Enable "Check In On Audit" button for employees with this designation. This allows check-in anytime without time restrictions.'
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
 
 
 @admin.register(Technology)
