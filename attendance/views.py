@@ -139,7 +139,18 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         return user.shifts.filter(is_active=True)
 
     def _is_within_shift_hours(self, current_time, shifts, allow_overtime=False, check_in_grace=False):
-        """Check if current time is within any of the user's shift hours"""
+        """
+        Check if current time is within any of the user's shift hours.
+        
+        Check-in rules:
+        - Allow check-in 3 hours BEFORE shift start
+        - Allow check-in ANY TIME after shift start (no upper limit)
+        - Within 15 minutes after shift start = Normal check-in
+        - After 15 minutes = Late check-in (handled separately)
+        
+        Returns: (is_allowed, is_late) tuple when check_in_grace=True
+        Returns: bool when check_in_grace=False
+        """
         # Convert UTC time to IST (India Standard Time - UTC+5:30)
         ist_tz = ZoneInfo('Asia/Kolkata')
         current_time_ist = current_time.astimezone(ist_tz)
@@ -155,17 +166,26 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if is_overnight:
                 # For overnight shifts, check if time is after start OR before end
                 if current_time_only >= start_time or current_time_only <= end_time:
+                    if check_in_grace:
+                        # Check if late (more than 15 minutes after shift start)
+                        grace_end = (datetime.combine(datetime.today(), start_time) + timedelta(minutes=15)).time()
+                        is_late = current_time_only > grace_end
+                        return (True, is_late)
                     return True
             else:
                 # For regular shifts (start_time <= end_time)
                 if check_in_grace:
                     # Allow check-in 3 hours before shift start (e.g., 7 AM for 10 AM shift)
                     early_start = (datetime.combine(datetime.today(), start_time) - timedelta(hours=3)).time()
-                    # Allow check-in up to 15 minutes after shift start (e.g., 10:15 AM for 10 AM shift)
+                    # Grace period ends 15 minutes after shift start
                     grace_end = (datetime.combine(datetime.today(), start_time) + timedelta(minutes=15)).time()
                     
-                    if early_start <= current_time_only <= grace_end:
-                        return True
+                    # Allow check-in from 3 hours before shift start to ANY time after shift start
+                    # (as long as it's before end of day - handled by night hours check elsewhere)
+                    if current_time_only >= early_start:
+                        # Determine if this is a late check-in (after 15 min grace period)
+                        is_late = current_time_only > grace_end
+                        return (True, is_late)
                         
                 elif allow_overtime:
                     # Allow check-out up to 4 hours after shift end for overtime
@@ -175,6 +195,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 else:
                     if start_time <= current_time_only <= end_time:
                         return True
+        
+        if check_in_grace:
+            return (False, False)
         return False
 
     def _calculate_total_hours(self, sessions):
@@ -437,20 +460,32 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if not is_audit_mode:  
             if is_first_checkin and not is_freelancer and not admin_reset_override:
                 shift_result = self._is_within_shift_hours(now, shifts, check_in_grace=True)
-                within_shift = shift_result if isinstance(shift_result, bool) else shift_result[0]
+                
+                # Handle tuple return (is_allowed, is_late)
+                if isinstance(shift_result, tuple):
+                    within_shift, is_late_checkin = shift_result
+                else:
+                    within_shift = shift_result
+                    is_late_checkin = False
+                
                 has_flexible_timing, flexible_message = self._check_flexible_timing_status(user, today, now)
 
                 if not within_shift and not has_flexible_timing:
-                    # return Response({
-                    #     'detail': 'Check-in allowed 3 hours before shift start, up to 15 minutes after shift start only.'
-                    # }, """status=status.HTTP_400_BAD_REQUEST)"""
+                    # Check-in not allowed before 3 hours of shift start
+                    return Response({
+                        'detail': 'Check-in allowed from 3 hours before shift start. Please wait until your shift window opens.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Mark as late check-in if after 15 minutes grace period
+                if is_late_checkin and not has_flexible_timing:
                     attendance.late_checkin = True
                     attendance.save()
+                    
             # If admin reset override is active, skip shift validation for first check-in
             else:
-            # Subsequent check-in (after break) - more lenient validation
-            # Just check if within reasonable hours (e.g., not in the middle of the night)
-            # Use IST for validation
+                # Subsequent check-in (after break) - more lenient validation
+                # Just check if within reasonable hours (e.g., not in the middle of the night)
+                # Use IST for validation
                 ist_now = get_ist_time(now)
                 current_hour = ist_now.hour
                 if current_hour < 6 or current_hour > 23:  # Between 6 AM and 11 PM IST
