@@ -171,23 +171,54 @@ class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
         
         return queryset.order_by('-created_at')
     
-    def perform_update(self, serializer):
-        """Handle leave policy status changes with balance management"""
+    def update(self, request, *args, **kwargs):
+        """Handle leave policy update with balance management"""
+        from common.timezone_utils import get_current_ist_date
+        
+        partial = kwargs.pop('partial', False)
         policy = self.get_object()
         old_is_active = policy.is_active
+        
+        serializer = self.get_serializer(policy, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        
         new_is_active = serializer.validated_data.get('is_active', old_is_active)
         
         # Save the changes first
-        serializer.save()
+        updated_policy = serializer.save()
+        
+        # Track sync status
+        auto_synced = False
+        sync_count = 0
+        current_date = get_current_ist_date()
         
         # Handle balance changes if status changed
         if old_is_active != new_is_active:
             if new_is_active:
                 # Policy activated - assign balances
-                self._assign_policy_balances(policy)
+                self._assign_policy_balances(updated_policy)
+                auto_synced = True
             else:
                 # Policy deactivated - remove balances
-                self._remove_policy_balances(policy)
+                self._remove_policy_balances(updated_policy)
+        else:
+            # Policy is active and remains active - check if we should auto-sync
+            if new_is_active:
+                # Only auto-sync if effective_from is today or in the past
+                if updated_policy.effective_from <= current_date:
+                    sync_count = self._update_existing_balances_with_policy(updated_policy)
+                    auto_synced = True
+        
+        # Return response with sync info
+        response_data = serializer.data
+        response_data['_sync_info'] = {
+            'auto_synced': auto_synced,
+            'sync_count': sync_count,
+            'effective_from': str(updated_policy.effective_from),
+            'is_future_effective': updated_policy.effective_from > current_date if new_is_active else False
+        }
+        
+        return Response(response_data)
     
     def perform_destroy(self, instance):
         """Handle leave policy deletion with balance cleanup"""
@@ -279,6 +310,155 @@ class LeaveTypePolicyViewSet(viewsets.ModelViewSet):
             logger = logging.getLogger(__name__)
             logger.error(f"Error removing balances for policy {policy.name}: {str(e)}")
             raise
+    
+    def _update_existing_balances_with_policy(self, policy):
+        """
+        Update existing balances to reference the updated policy
+        Returns the number of balances updated
+        """
+        from django.db import transaction
+        from common.timezone_utils import get_current_ist_date
+        
+        updated_count = 0
+        
+        try:
+            with transaction.atomic():
+                current_date = get_current_ist_date()
+                current_year = current_date.year
+                
+                # Find all balances for this leave type and year
+                # Update ALL balances that currently reference this policy OR
+                # balances that should use this policy based on user applicability
+                balances = LeaveBalance.objects.filter(
+                    leave_type=policy.leave_type,
+                    year=current_year
+                ).select_related('user', 'policy')
+                
+                for balance in balances:
+                    should_update = False
+                    
+                    # Update if balance already references this policy (policy was edited)
+                    if balance.policy and balance.policy.id == policy.id:
+                        should_update = True
+                    # Or if this policy is applicable to the user and they don't have a policy
+                    elif not balance.policy and policy.is_applicable_for_user(balance.user):
+                        should_update = True
+                    # Or if this policy is applicable and is the best match for the user
+                    elif policy.is_applicable_for_user(balance.user):
+                        should_update = True
+                    
+                    if should_update:
+                        # Update the balance to reference the updated policy
+                        # This ensures new limits (max_per_month, etc.) apply immediately
+                        balance.policy = policy
+                        # Don't change opening_balance, used_balance, or accrued_balance
+                        # Only update the policy reference so new limits apply
+                        balance.save(update_fields=['policy', 'updated_at'])
+                        updated_count += 1
+                
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"Synced {updated_count} balances to use policy {policy.name} "
+                    f"({policy.leave_type.name}) - max_per_month: {policy.max_per_month}"
+                )
+                
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error updating balances for policy {policy.name}: {str(e)}")
+            raise
+        
+        return updated_count
+    
+    @action(detail=True, methods=['post'])
+    def update_user_balances(self, request, pk=None):
+        """
+        Update user balances after policy changes
+        Gives admin control over how to handle existing balances
+        """
+        policy = self.get_object()
+        
+        update_mode = request.data.get('update_mode', 'policy_only')  # policy_only, reset_opening, full_reset
+        year = request.data.get('year', date.today().year)
+        user_ids = request.data.get('user_ids', [])  # Empty = all applicable users
+        
+        from django.db import transaction
+        
+        try:
+            with transaction.atomic():
+                # Get users to update
+                if user_ids:
+                    users = User.objects.filter(id__in=user_ids, is_active=True)
+                else:
+                    users = User.objects.filter(is_active=True)
+                
+                updated_count = 0
+                created_count = 0
+                skipped_count = 0
+                
+                for user in users:
+                    # Check if policy is applicable to this user
+                    if not policy.is_applicable_for_user(user):
+                        skipped_count += 1
+                        continue
+                    
+                    # Get or create balance
+                    balance, created = LeaveBalance.objects.get_or_create(
+                        user=user,
+                        leave_type=policy.leave_type,
+                        year=year,
+                        defaults={
+                            'policy': policy,
+                            'opening_balance': policy.annual_quota,
+                            'accrued_balance': Decimal('0'),
+                            'used_balance': Decimal('0'),
+                            'carried_forward': Decimal('0'),
+                            'adjustment': Decimal('0'),
+                        }
+                    )
+                    
+                    if created:
+                        created_count += 1
+                    else:
+                        # Update existing balance based on mode
+                        if update_mode == 'policy_only':
+                            # Only update policy reference, keep all balances intact
+                            balance.policy = policy
+                            balance.save(update_fields=['policy', 'updated_at'])
+                        elif update_mode == 'reset_opening':
+                            # Update policy and reset opening balance, keep used/accrued intact
+                            balance.policy = policy
+                            balance.opening_balance = policy.annual_quota
+                            balance.save(update_fields=['policy', 'opening_balance', 'updated_at'])
+                        elif update_mode == 'full_reset':
+                            # Full reset - WARNING: This resets everything
+                            balance.policy = policy
+                            balance.opening_balance = policy.annual_quota
+                            balance.accrued_balance = Decimal('0')
+                            # Keep used_balance and carried_forward intact
+                            balance.save(update_fields=['policy', 'opening_balance', 'accrued_balance', 'updated_at'])
+                        
+                        updated_count += 1
+                
+                return Response({
+                    'message': 'Balances updated successfully',
+                    'summary': {
+                        'created': created_count,
+                        'updated': updated_count,
+                        'skipped': skipped_count,
+                        'total_processed': created_count + updated_count + skipped_count
+                    }
+                })
+                
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error updating balances for policy {policy.name}: {str(e)}")
+            return Response(
+                {'error': f'Failed to update balances: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=True, methods=['post'])
     def clone(self, request, pk=None):
@@ -532,6 +712,75 @@ class LeaveBalanceViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response(
                 {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def sync_policy_rules(self, request):
+        """
+        Sync all balances with their current applicable policies.
+        This updates the policy reference for each balance without changing balance amounts.
+        """
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        year = request.data.get('year', date.today().year)
+        
+        try:
+            from django.db.models import Q
+            
+            # Get all active policies
+            active_policies = LeaveTypePolicy.objects.filter(
+                is_active=True,
+                effective_from__lte=date.today()
+            ).filter(
+                Q(effective_to__isnull=True) | Q(effective_to__gte=date.today())
+            ).select_related('leave_type')
+            
+            # Get all balances for the year
+            balances = LeaveBalance.objects.filter(year=year).select_related('user', 'leave_type', 'policy')
+            
+            updated_count = 0
+            skipped_count = 0
+            
+            with transaction.atomic():
+                for balance in balances:
+                    # Find the applicable policy for this user and leave type
+                    applicable_policy = None
+                    for policy in active_policies:
+                        if policy.leave_type_id == balance.leave_type_id and policy.is_applicable_for_user(balance.user):
+                            applicable_policy = policy
+                            break
+                    
+                    if applicable_policy:
+                        # Update balance to reference the current policy
+                        if balance.policy_id != applicable_policy.id:
+                            balance.policy = applicable_policy
+                            balance.save(update_fields=['policy', 'updated_at'])
+                            updated_count += 1
+                        else:
+                            skipped_count += 1
+                    else:
+                        skipped_count += 1
+            
+            return Response({
+                'message': f'Synced policy rules for {updated_count} balances',
+                'summary': {
+                    'updated': updated_count,
+                    'skipped': skipped_count,
+                    'total': updated_count + skipped_count
+                }
+            })
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error syncing policy rules: {str(e)}")
+            return Response(
+                {'error': f'Failed to sync policy rules: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

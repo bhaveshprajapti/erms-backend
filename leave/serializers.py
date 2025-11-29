@@ -64,6 +64,25 @@ class LeaveTypePolicySerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         """Validate policy data"""
+        # Convert empty strings and 0 to None for optional integer fields
+        # This ensures "no limit" is properly stored as NULL in database
+        optional_int_fields = [
+            'max_per_week', 'max_per_month', 'max_per_year', 
+            'max_consecutive_days', 'auto_approve_threshold'
+        ]
+        for field in optional_int_fields:
+            if field in data:
+                value = data[field]
+                # Convert empty string, 0, or None to None
+                if value == '' or value == 0 or value is None:
+                    data[field] = None
+        
+        # Handle max_occurrences_per_month (decimal field)
+        if 'max_occurrences_per_month' in data:
+            value = data['max_occurrences_per_month']
+            if value == '' or value == 0 or value is None:
+                data['max_occurrences_per_month'] = None
+        
         if data.get('effective_to') and data.get('effective_from'):
             if data['effective_to'] <= data['effective_from']:
                 raise serializers.ValidationError("Effective to date must be after effective from date")
