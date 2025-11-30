@@ -92,14 +92,17 @@ class UserViewSet(viewsets.ModelViewSet):
         instance.is_active = False
         instance.save()
 
-    @action(detail=False,methods=['get'])
-    def today_birthday(self,request):
+    @action(detail=False, methods=['get'])
+    def today_birthday(self, request):
+        """Return all employees whose birthday is today with their photos and messages"""
         today = date.today()
 
-        birthday_user = User.objects.filter(
+        birthday_users = User.objects.filter(
             birth_date__isnull=False,
             birth_date__month=today.month,
-            birth_date__day=today.day
+            birth_date__day=today.day,
+            is_active=True,
+            deleted_at__isnull=True
         )
 
         BIRTHDAY_MESSAGES = [
@@ -110,21 +113,71 @@ class UserViewSet(viewsets.ModelViewSet):
             "🎉 Cheers to your special day!",
             "🌟 May your year be filled with success & smiles!",
             "🎂 Warm wishes on your birthday!",
-            "🥳 Have a wonderful birthday celebration!"
+            "🥳 Have a wonderful birthday celebration!",
+            "🎊 Another year of amazing you! Happy Birthday!",
+            "🌈 May all your dreams come true! Happy Birthday!",
+            "🎁 Wishing you a day filled with love and laughter!",
+            "🎈 Here's to a year of great achievements! Happy Birthday!"
         ]
 
-
-        messages = [
-            f"{random.choice(BIRTHDAY_MESSAGES)} {user.first_name} {user.last_name}! 🎈" 
-            for user in birthday_user
-        ]
-
-        serializers = UserListSerializer(birthday_user, many=True)
+        birthday_data = []
+        for user in birthday_users:
+            # Get profile picture URL
+            profile_picture_url = None
+            if user.profile_picture:
+                profile_picture_url = request.build_absolute_uri(user.profile_picture.url)
+            
+            birthday_data.append({
+                "id": user.id,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "full_name": f"{user.first_name} {user.last_name}",
+                "message": random.choice(BIRTHDAY_MESSAGES),
+                "profile_picture": profile_picture_url,
+                "employee_id": user.employee_id,
+                "gender": user.gender  # Include gender for color theming
+            })
 
         return Response({
-            "count":birthday_user.count(),
-            "messages":messages,
-            "employees":serializers.data
+            "count": birthday_users.count(),
+            "birthdays": birthday_data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def my_birthday_message(self, request):
+        """Return birthday message for the current user if today is their birthday"""
+        today = date.today()
+        user = request.user
+        
+        # Check if today is the user's birthday
+        if user.birth_date and user.birth_date.month == today.month and user.birth_date.day == today.day:
+            BIRTHDAY_MESSAGES = [
+                "🎉 Wishing you a fantastic birthday!",
+                "🎂 Have an amazing birthday! Enjoy your day!",
+                "✨ May your birthday bring happiness and joy!",
+                "🥳 Happy Birthday! Stay blessed!",
+                "🎉 Cheers to your special day!",
+                "🌟 May your year be filled with success & smiles!",
+                "🎂 Warm wishes on your birthday!",
+                "🥳 Have a wonderful birthday celebration!",
+                "🎊 Another year of amazing you! Happy Birthday!",
+                "🌈 May all your dreams come true! Happy Birthday!",
+                "🎁 Wishing you a day filled with love and laughter!",
+                "🎈 Here's to a year of great achievements! Happy Birthday!"
+            ]
+            
+            message = f"{random.choice(BIRTHDAY_MESSAGES)} {user.first_name}! 🎈"
+            
+            return Response({
+                "is_birthday": True,
+                "message": message,
+                "first_name": user.first_name,
+                "last_name": user.last_name
+            })
+        
+        return Response({
+            "is_birthday": False,
+            "message": None
         })
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
