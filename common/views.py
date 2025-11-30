@@ -68,6 +68,18 @@ class HolidayViewSet(viewsets.ModelViewSet):
     queryset = Holiday.objects.all()
     serializer_class = HolidaySerializer
     
+    def get_queryset(self):
+        """Filter holidays by year if provided"""
+        queryset = Holiday.objects.all().order_by('date')
+        year = self.request.query_params.get('year')
+        if year:
+            try:
+                year = int(year)
+                queryset = queryset.filter(date__year=year)
+            except (ValueError, TypeError):
+                pass
+        return queryset
+    
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get holiday statistics"""
