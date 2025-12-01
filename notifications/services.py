@@ -84,7 +84,10 @@ class NotificationService:
             dict with success status and counts
         """
         user_ids = [u.id for u in users]
+        logger.info(f"send_to_users called: {len(user_ids)} users, title={title}")
+        
         tokens = list(FCMToken.objects.filter(user_id__in=user_ids, is_active=True))
+        logger.info(f"Found {len(tokens)} active FCM tokens for {len(user_ids)} users")
         
         if not tokens:
             logger.info("No active FCM tokens for specified users")
@@ -182,6 +185,8 @@ class NotificationService:
         
         # Only send if announcement is currently active
         today = now().date()
+        logger.info(f"notify_announcement called: title={announcement.title}, start={announcement.start_date}, end={announcement.end_date}, today={today}")
+        
         if announcement.start_date <= today <= announcement.end_date:
             # Send only to active employees (non-admin, non-staff users)
             employees = User.objects.filter(
@@ -190,17 +195,26 @@ class NotificationService:
                 is_superuser=False
             )
             
+            employee_count = employees.count()
+            logger.info(f"Found {employee_count} active employees")
+            
             # Exclude the user who created the announcement if provided
             if exclude_user:
                 employees = employees.exclude(id=exclude_user.id)
+                logger.info(f"After excluding creator, {employees.count()} employees remain")
             
             title = f"📢 {announcement.title}"
             body = announcement.description[:100] + '...' if len(announcement.description) > 100 else announcement.description
             
-            return NotificationService.send_to_users(
+            logger.info(f"Sending announcement notification to employees: title={title}")
+            result = NotificationService.send_to_users(
                 employees, title, body, 'info',
                 {'type': 'announcement', 'announcement_id': str(announcement.id)}
             )
+            logger.info(f"Announcement notification result: {result}")
+            return result
+        
+        logger.info(f"Announcement not active, skipping notification")
         return {'success': False, 'message': 'Announcement not active'}
     
     @staticmethod

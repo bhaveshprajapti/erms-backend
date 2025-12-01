@@ -11,7 +11,7 @@ class Announcement(models.Model):
   created_at = models.DateTimeField(auto_now_add=True)
 
   class Meta:
-    ordering = ['end_date']
+    ordering = ['-created_at', 'end_date']
 
   def __str__(self):
     return self.title
