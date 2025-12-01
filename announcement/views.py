@@ -43,7 +43,8 @@ class AnnouncementViewset(ModelViewSet):
         if announcement.start_date <= today <= announcement.end_date:
             try:
                 from notifications.services import NotificationService
-                NotificationService.notify_announcement(announcement)
+                # Exclude the admin who created the announcement
+                NotificationService.notify_announcement(announcement, exclude_user=self.request.user)
                 logger.info(f"Notification sent for announcement: {announcement.title}")
             except Exception as e:
                 logger.error(f"Failed to send notification for announcement: {e}")
@@ -61,7 +62,8 @@ class AnnouncementViewset(ModelViewSet):
         if is_active and not was_active:
             try:
                 from notifications.services import NotificationService
-                NotificationService.notify_announcement(announcement)
+                # Exclude the admin who updated the announcement
+                NotificationService.notify_announcement(announcement, exclude_user=self.request.user)
                 logger.info(f"Notification sent for activated announcement: {announcement.title}")
             except Exception as e:
                 logger.error(f"Failed to send notification for announcement: {e}")

@@ -175,22 +175,30 @@ class NotificationService:
     # ============ Specific Notification Methods ============
     
     @staticmethod
-    def notify_announcement(announcement):
-        """Send notification for a new active announcement"""
+    def notify_announcement(announcement, exclude_user=None):
+        """Send notification for a new active announcement to employees only"""
         from accounts.models import User
         from django.utils.timezone import now
         
         # Only send if announcement is currently active
         today = now().date()
         if announcement.start_date <= today <= announcement.end_date:
-            # Send to all users with active tokens
-            all_users = User.objects.filter(is_active=True)
+            # Send only to active employees (non-admin, non-staff users)
+            employees = User.objects.filter(
+                is_active=True,
+                is_staff=False,
+                is_superuser=False
+            )
+            
+            # Exclude the user who created the announcement if provided
+            if exclude_user:
+                employees = employees.exclude(id=exclude_user.id)
             
             title = f"📢 {announcement.title}"
             body = announcement.description[:100] + '...' if len(announcement.description) > 100 else announcement.description
             
             return NotificationService.send_to_users(
-                all_users, title, body, 'info',
+                employees, title, body, 'info',
                 {'type': 'announcement', 'announcement_id': str(announcement.id)}
             )
         return {'success': False, 'message': 'Announcement not active'}

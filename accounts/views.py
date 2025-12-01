@@ -95,7 +95,9 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def today_birthday(self, request):
         """Return all employees whose birthday is today with their photos and messages"""
-        today = date.today()
+        # Use IST timezone for birthday check
+        from common.timezone_utils import get_current_ist_date
+        today = get_current_ist_date()
 
         birthday_users = User.objects.filter(
             birth_date__isnull=False,
@@ -146,10 +148,12 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def my_birthday_message(self, request):
         """Return birthday message for the current user if today is their birthday"""
-        today = date.today()
+        # Use IST timezone for birthday check
+        from common.timezone_utils import get_current_ist_date
+        today = get_current_ist_date()
         user = request.user
         
-        # Check if today is the user's birthday
+        # Check if today is the user's birthday (using IST date)
         if user.birth_date and user.birth_date.month == today.month and user.birth_date.day == today.day:
             BIRTHDAY_MESSAGES = [
                 "🎉 Wishing you a fantastic birthday!",
