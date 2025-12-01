@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     'leave',
     'files',
     'announcement',
+    'notifications',  # Firebase Cloud Messaging
 ]
 
 MIDDLEWARE = [
@@ -100,22 +101,22 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='ermsdb'),
-        'USER': config('DB_USER', default='ermsuser'),
-        'PASSWORD': config('DB_PASSWORD', default='Erms@12345'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': config('DB_NAME', default='ermsdb'),
+#         'USER': config('DB_USER', default='ermsuser'),
+#         'PASSWORD': config('DB_PASSWORD', default='Erms@12345'),
+#         'HOST': config('DB_HOST', default='localhost'),
+#         'PORT': config('DB_PORT', default='5432'),
+#     }
+# }
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -290,3 +291,8 @@ CSRF_TRUSTED_ORIGINS = [
     "https://ems.digiwavetechnologies.in",
     "https://digiwavetechnologies.in",
 ]
+
+# Firebase Configuration
+# Path to Firebase service account key JSON file
+# Download this from Firebase Console > Project Settings > Service Accounts > Generate New Private Key
+FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'firebase-credentials.json')

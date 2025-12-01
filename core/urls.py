@@ -34,6 +34,7 @@ urlpatterns = [
     path('api/v1/leave/', include('leave.urls')),
     path('api/v1/files/', include('files.urls')),
     path('api/v1/announcement/', include('announcement.urls')),
+    path('api/v1/', include('notifications.urls')),  # FCM notifications
 ]
 
 # Serve media files during development
