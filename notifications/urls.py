@@ -1,11 +1,12 @@
 # notifications/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import FCMTokenViewSet, NotificationViewSet
+from .views import FCMTokenViewSet, NotificationViewSet, AdminNotificationViewSet
 
 router = DefaultRouter()
 router.register(r'fcm-tokens', FCMTokenViewSet, basename='fcm-token')
 router.register(r'notifications', NotificationViewSet, basename='notification')
+router.register(r'admin/notifications', AdminNotificationViewSet, basename='admin-notification')
 
 urlpatterns = [
     path('', include(router.urls)),

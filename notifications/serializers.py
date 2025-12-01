@@ -31,11 +31,51 @@ class FCMTokenSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+class FCMTokenAdminSerializer(serializers.ModelSerializer):
+    """Admin serializer with user details"""
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
+    username = serializers.CharField(source='user.username', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_full_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = FCMToken
+        fields = [
+            'id', 'token', 'device_type', 'device_name', 'is_active', 
+            'created_at', 'updated_at', 'user_id', 'username', 
+            'user_email', 'user_full_name'
+        ]
+        read_only_fields = fields
+    
+    def get_user_full_name(self, obj):
+        return f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.username
+
+
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ['id', 'title', 'body', 'notification_type', 'data', 'is_read', 'sent_at', 'read_at']
         read_only_fields = ['id', 'sent_at', 'read_at']
+
+
+class NotificationLogSerializer(serializers.ModelSerializer):
+    """Admin serializer for notification logs with user details"""
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
+    username = serializers.CharField(source='user.username', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_full_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Notification
+        fields = [
+            'id', 'title', 'body', 'notification_type', 'data', 
+            'is_read', 'sent_at', 'read_at', 'user_id', 'username',
+            'user_email', 'user_full_name'
+        ]
+        read_only_fields = fields
+    
+    def get_user_full_name(self, obj):
+        return f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.username
 
 
 class SendNotificationSerializer(serializers.Serializer):

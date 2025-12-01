@@ -322,6 +322,18 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
         # Regular employees can only see their own requests
         return ProfileUpdateRequest.objects.filter(user=user).order_by('-requested_at')
     
+    def perform_create(self, serializer):
+        """Create profile update request and notify admins"""
+        profile_request = serializer.save(user=self.request.user)
+        
+        # Send notification to admins
+        try:
+            from notifications.services import NotificationService
+            NotificationService.notify_profile_update_submitted(profile_request)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to send profile update notification: {e}")
+    
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def approve(self, request, pk=None):
         """Approve a profile update request (admin only)"""
@@ -407,6 +419,14 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
             update_request.admin_comment = request.data.get('admin_comment', '')
             update_request.save()
             
+            # Send notification to employee
+            try:
+                from notifications.services import NotificationService
+                NotificationService.notify_profile_update_approved(update_request)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to send profile approval notification: {e}")
+            
             return Response({
                 'message': 'Profile update approved and applied',
                 'request_id': update_request.id
@@ -431,8 +451,17 @@ class ProfileUpdateRequestViewSet(viewsets.ModelViewSet):
             update_request.status = 'rejected'
             update_request.approved_by = request.user
             update_request.processed_at = timezone.now()
-            update_request.admin_comment = request.data.get('admin_comment', 'Request rejected')
+            admin_comment = request.data.get('admin_comment', 'Request rejected')
+            update_request.admin_comment = admin_comment
             update_request.save()
+            
+            # Send notification to employee
+            try:
+                from notifications.services import NotificationService
+                NotificationService.notify_profile_update_rejected(update_request, admin_comment)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to send profile rejection notification: {e}")
             
             return Response({
                 'message': 'Profile update rejected',

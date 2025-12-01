@@ -867,8 +867,21 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
             application.approved_at = timezone.now()
             application.save()
             
-            # Send notification about auto-approval if needed
-            # You can add notification logic here
+            # Send auto-approval notification to employee
+            try:
+                from notifications.services import NotificationService
+                NotificationService.notify_leave_approved(application)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to send auto-approval notification: {e}")
+        else:
+            # Send notification to admins about new leave request
+            try:
+                from notifications.services import NotificationService
+                NotificationService.notify_leave_request_submitted(application)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to send leave request notification: {e}")
     
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -898,6 +911,13 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
             try:
                 if data['action'] == 'approve':
                     application.approve(request.user, data.get('comments'))
+                    # Send notification to employee
+                    try:
+                        from notifications.services import NotificationService
+                        NotificationService.notify_leave_approved(application)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error(f"Failed to send leave approval notification: {e}")
                     return Response({'message': 'Application approved successfully'})
                 else:
                     application.reject(
@@ -905,6 +925,13 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
                         data['rejection_reason'],
                         data.get('comments')
                     )
+                    # Send notification to employee
+                    try:
+                        from notifications.services import NotificationService
+                        NotificationService.notify_leave_rejected(application, data.get('rejection_reason'))
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error(f"Failed to send leave rejection notification: {e}")
                     return Response({'message': 'Application rejected successfully'})
             except Exception as e:
                 return Response(
@@ -936,6 +963,13 @@ class LeaveApplicationViewSet(viewsets.ModelViewSet):
         
         try:
             application.reject(request.user, rejection_reason, comments)
+            # Send notification to employee
+            try:
+                from notifications.services import NotificationService
+                NotificationService.notify_leave_rejected(application, rejection_reason)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to send leave rejection notification: {e}")
             return Response({'message': 'Application rejected successfully'})
         except Exception as e:
             return Response(
