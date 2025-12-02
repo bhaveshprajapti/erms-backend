@@ -309,8 +309,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
                 instance.plain_password = plain_password
             instance.save()  # Save the instance after setting password
         
-        # Create employee folder if requested and not already created
+        # Handle employee folder creation/deletion
         if create_folder and not instance.folder_path:
+            # Create folder if requested and doesn't exist
             folder_name = f"{instance.first_name}_{instance.last_name}_{instance.id}"
             folder_path = os.path.join('employee_folders', folder_name)
             full_folder_path = os.path.join(settings.MEDIA_ROOT, folder_path)
@@ -339,6 +340,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
                     description=f"Employee folder for {instance.first_name} {instance.last_name}"
                 )
                 
+                instance.employee_folder = main_folder
+                
                 # Create database records for subfolders
                 for subfolder_name in subfolders:
                     Folder.objects.create(
@@ -355,6 +358,29 @@ class UserDetailSerializer(serializers.ModelSerializer):
                 print(f"Successfully created folder structure for employee {instance.username} at {folder_path}")
             except Exception as e:
                 print(f"Failed to create folder for employee {instance.username}: {e}")
+        elif not create_folder and instance.folder_path:
+            # Delete folder if switch is turned off and folder exists
+            import shutil
+            from files.models import Folder
+            
+            try:
+                # Delete physical folder
+                full_folder_path = os.path.join(settings.MEDIA_ROOT, instance.folder_path)
+                if os.path.exists(full_folder_path):
+                    shutil.rmtree(full_folder_path)
+                    print(f"Successfully deleted folder for employee {instance.username} at {instance.folder_path}")
+                
+                # Delete database records
+                if instance.employee_folder:
+                    # Delete all subfolders and files associated with this folder
+                    Folder.objects.filter(parent=instance.employee_folder).delete()
+                    instance.employee_folder.delete()
+                    instance.employee_folder = None
+                
+                instance.folder_path = None
+                print(f"Successfully removed folder references for employee {instance.username}")
+            except Exception as e:
+                print(f"Failed to delete folder for employee {instance.username}: {e}")
         
         instance.save()
         return instance
